@@ -1,0 +1,9 @@
+{
+  "score": 34.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_rebar_development_length",
+    "rationale": "ACI 318-19 Section 25.4 straight deformed rebar tension development length is a ubiquitous structural PE exam and plan-review code gate. It validates embedment depth against bar size, concrete/steel strength, casting position, epoxy coating caps, confinement, and the mandatory 12-inch code minimum.",
+    "model": "gemini-3.8-flash"
+  }
+}

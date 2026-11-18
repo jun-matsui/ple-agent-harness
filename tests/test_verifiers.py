@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_rebar_development_length,
     verify_aisc_column_base_plate,
     verify_hvac_cooling_load_capacity,
     verify_aci_punching_shear,
@@ -1728,6 +1729,86 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_input")
+
+
+    def test_aci_rebar_development_length(self) -> None:
+        from harness.verifiers import verify_aci_rebar_development_length
+
+        # Standard #8 bottom bar passing
+        res_pass = verify_aci_rebar_development_length(
+            provided_length_in=30.0,
+            bar_size_num=8,
+            fy_psi=60000.0,
+            fc_psi=4000.0,
+            confinement_override=2.5,
+            casting_position="other",
+            coating_type="uncoated",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertAlmostEqual(res_pass["ld_required_in"], 28.46, places=1)
+        self.assertEqual(res_pass["psi_s"], 1.0)
+        self.assertEqual(res_pass["psi_g"], 1.0)
+
+        # Top bar factor (psi_t = 1.3) pushes required length over 30 inches
+        res_top_fail = verify_aci_rebar_development_length(
+            provided_length_in=30.0,
+            bar_size_num=8,
+            fy_psi=60000.0,
+            fc_psi=4000.0,
+            confinement_override=2.5,
+            casting_position="top",
+        )
+        self.assertFalse(res_top_fail["pass"])
+        self.assertGreater(res_top_fail["dcr"], 1.0)
+        self.assertAlmostEqual(res_top_fail["ld_required_in"], 37.0, places=1)
+
+        # 12-inch code minimum development length check for small bar (#4)
+        res_min_len = verify_aci_rebar_development_length(
+            provided_length_in=14.0,
+            bar_size_num=4,
+            fy_psi=60000.0,
+            fc_psi=4000.0,
+            confinement_override=2.5,
+        )
+        self.assertTrue(res_min_len["pass"])
+        self.assertEqual(res_min_len["ld_required_in"], 12.0)
+        self.assertLess(res_min_len["ld_calc_in"], 12.0)
+        self.assertEqual(res_min_len["psi_s"], 0.8)
+
+        # Epoxy coating cap test: psi_t * psi_e = 1.3 * 1.5 = 1.95 capped at 1.7
+        res_epoxy_cap = verify_aci_rebar_development_length(
+            provided_length_in=60.0,
+            bar_size_num=8,
+            fy_psi=60000.0,
+            fc_psi=4000.0,
+            confinement_override=2.5,
+            casting_position="top",
+            coating_type="epoxy_low_cover",
+        )
+        self.assertEqual(res_epoxy_cap["psi_t_e"], 1.7)
+
+        # Error handling tests
+        res_nan = verify_aci_rebar_development_length(
+            provided_length_in=float("nan"),
+            bar_size_num=8,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_rebar_development_length(
+            provided_length_in=-10.0,
+            bar_size_num=8,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_provided_length")
+
+        res_inv_bar = verify_aci_rebar_development_length(
+            provided_length_in=30.0,
+            bar_size_num=99,
+        )
+        self.assertFalse(res_inv_bar["pass"])
+        self.assertEqual(res_inv_bar["reason"], "invalid_bar_size")
 
 
 if __name__ == "__main__":

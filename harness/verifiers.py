@@ -1802,3 +1802,130 @@ def verify_aisc_column_base_plate(
         "critical_cantilever_in": round(l_crit_in, 3),
         "bearing_pressure_ksi": round(fp_ksi, 4),
     }
+
+
+def verify_aci_rebar_development_length(
+    provided_length_in: float,
+    bar_size_num: int = 8,
+    bar_diameter_in: float = 0.0,
+    fy_psi: float = 60000.0,
+    fc_psi: float = 4000.0,
+    cb_in: float = 0.0,
+    ktr_in: float = 0.0,
+    confinement_override: float = 0.0,
+    casting_position: str = "other",
+    coating_type: str = "uncoated",
+    is_lightweight: bool = False,
+    lambda_factor: float = 1.0,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 25.4.2 tension development length (ld) check for deformed rebar."""
+    scalars = [
+        provided_length_in,
+        bar_diameter_in,
+        fy_psi,
+        fc_psi,
+        cb_in,
+        ktr_in,
+        confinement_override,
+        lambda_factor,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if provided_length_in <= 0:
+        return {"pass": False, "reason": "non_positive_provided_length"}
+    if fy_psi <= 0 or fc_psi <= 0 or lambda_factor <= 0:
+        return {"pass": False, "reason": "non_positive_material_properties"}
+    if cb_in < 0 or ktr_in < 0 or confinement_override < 0:
+        return {"pass": False, "reason": "negative_confinement_input"}
+
+    bar_diameters: Dict[int, float] = {
+        3: 0.375,
+        4: 0.500,
+        5: 0.625,
+        6: 0.750,
+        7: 0.875,
+        8: 1.000,
+        9: 1.128,
+        10: 1.270,
+        11: 1.410,
+        14: 1.693,
+        18: 2.257,
+    }
+    if bar_diameter_in > 0.0:
+        db = bar_diameter_in
+    elif bar_size_num in bar_diameters:
+        db = bar_diameters[bar_size_num]
+    else:
+        return {"pass": False, "reason": "invalid_bar_size"}
+
+    # Casting position factor psi_t (ACI 318-19 Table 25.4.2.4)
+    pos = casting_position.strip().lower()
+    if pos in ("top",):
+        psi_t = 1.3
+    elif pos in ("other", "bottom"):
+        psi_t = 1.0
+    else:
+        return {"pass": False, "reason": "invalid_casting_position"}
+
+    # Coating factor psi_e (ACI 318-19 Table 25.4.2.4)
+    coat = coating_type.strip().lower()
+    if coat in ("uncoated", "galvanized", "black"):
+        psi_e = 1.0
+    elif coat in ("epoxy_low_cover", "epoxy_low"):
+        psi_e = 1.5
+    elif coat in ("epoxy_high_cover", "epoxy_high", "epoxy"):
+        psi_e = 1.2
+    else:
+        return {"pass": False, "reason": "invalid_coating_type"}
+
+    # ACI 318-19 Section 25.4.2.4: product of psi_t and psi_e need not exceed 1.7
+    psi_t_e = min(psi_t * psi_e, 1.7)
+
+    # Reinforcement size factor psi_s (ACI 318-19 Table 25.4.2.4)
+    psi_s = 0.8 if db <= 0.75 else 1.0
+
+    # Reinforcement grade factor psi_g (ACI 318-19 Table 25.4.2.4)
+    if fy_psi <= 60000.0:
+        psi_g = 1.0
+    elif fy_psi <= 80000.0:
+        psi_g = 1.15
+    else:
+        psi_g = 1.30
+
+    # Lightweight concrete modification factor lambda
+    lambda_val = (lambda_factor if lambda_factor < 1.0 else 0.75) if is_lightweight else lambda_factor
+
+    # Concrete compressive strength square-root limit (ACI 318-19 Section 25.4.1.4: sqrt(f'c) <= 100 psi)
+    sqrt_fc = min(math.sqrt(fc_psi), 100.0)
+
+    # Confinement term (cb + Ktr) / db capped at 2.5 (ACI 318-19 Section 25.4.2.3)
+    if confinement_override > 0.0:
+        confinement_term = min(confinement_override, 2.5)
+    elif cb_in > 0.0:
+        confinement_term = min((cb_in + ktr_in) / db, 2.5)
+    else:
+        confinement_term = 2.5
+
+    # ACI 318-19 Eq. 25.4.2.3a tension development length
+    ld_calc = (
+        (3.0 / 40.0)
+        * (fy_psi / (lambda_val * sqrt_fc))
+        * (psi_t_e * psi_s * psi_g / confinement_term)
+    ) * db
+
+    # ACI 318-19 Section 25.4.2.1 minimum development length of 12.0 inches
+    ld_required = max(ld_calc, 12.0)
+    dcr = ld_required / provided_length_in
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "ld_required_in": round(ld_required, 2),
+        "ld_calc_in": round(ld_calc, 2),
+        "bar_diameter_in": round(db, 3),
+        "confinement_term": round(confinement_term, 3),
+        "psi_t_e": round(psi_t_e, 3),
+        "psi_s": round(psi_s, 2),
+        "psi_g": round(psi_g, 2),
+    }
