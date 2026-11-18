@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asce7_nonstructural_component_seismic,
     verify_nec_equipment_grounding_conductor,
     verify_aashto_horizontal_curve,
     verify_meyerhof_bearing_capacity,
@@ -3020,6 +3021,125 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_table_exceed["pass"])
         self.assertEqual(res_table_exceed["reason"], "ocpd_exceeds_code_table")
+
+
+    def test_asce7_nonstructural_component_seismic(self) -> None:
+        from harness.verifiers import verify_asce7_nonstructural_component_seismic
+
+        # Rooftop chiller passing check (unclamped governing)
+        res_pass = verify_asce7_nonstructural_component_seismic(
+            w_p_kips=10.0,
+            s_ds=1.0,
+            ap_factor=2.5,
+            rp_factor=6.0,
+            z_height_ft=40.0,
+            h_roof_ft=40.0,
+            f_p_capacity_kips=6.0,
+            importance_factor_ip=1.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["governing_limit"], "unclamped")
+        self.assertAlmostEqual(res_pass["f_p_kips"], 5.0, places=2)
+        self.assertAlmostEqual(res_pass["dcr"], 5.0 / 6.0, places=4)
+        self.assertAlmostEqual(res_pass["f_pv_kips"], 2.0, places=2)
+
+        # Ground-level equipment governed by lower bound minimum limit
+        res_min = verify_asce7_nonstructural_component_seismic(
+            w_p_kips=10.0,
+            s_ds=1.0,
+            ap_factor=1.0,
+            rp_factor=2.5,
+            z_height_ft=0.0,
+            h_roof_ft=50.0,
+            f_p_capacity_kips=4.0,
+            importance_factor_ip=1.0,
+        )
+        self.assertTrue(res_min["pass"])
+        self.assertEqual(res_min["governing_limit"], "min_limit")
+        self.assertAlmostEqual(res_min["f_p_kips"], 3.0, places=2)
+        self.assertAlmostEqual(res_min["f_p_unclamped_kips"], 1.6, places=2)
+
+        # Rooftop flexible component governed by upper bound maximum limit
+        res_max = verify_asce7_nonstructural_component_seismic(
+            w_p_kips=10.0,
+            s_ds=1.2,
+            ap_factor=2.5,
+            rp_factor=1.5,
+            z_height_ft=50.0,
+            h_roof_ft=50.0,
+            f_p_capacity_kips=35.0,
+            importance_factor_ip=1.5,
+        )
+        self.assertTrue(res_max["pass"])
+        self.assertEqual(res_max["governing_limit"], "max_limit")
+        self.assertAlmostEqual(res_max["f_p_kips"], 28.8, places=2)
+        self.assertGreater(res_max["f_p_unclamped_kips"], 28.8)
+
+        # Capacity exceeded failure
+        res_fail = verify_asce7_nonstructural_component_seismic(
+            w_p_kips=10.0,
+            s_ds=1.0,
+            ap_factor=2.5,
+            rp_factor=6.0,
+            z_height_ft=40.0,
+            h_roof_ft=40.0,
+            f_p_capacity_kips=4.0,
+            importance_factor_ip=1.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Height error check (z > h)
+        res_height_err = verify_asce7_nonstructural_component_seismic(
+            w_p_kips=10.0,
+            s_ds=1.0,
+            ap_factor=2.5,
+            rp_factor=6.0,
+            z_height_ft=55.0,
+            h_roof_ft=50.0,
+            f_p_capacity_kips=6.0,
+        )
+        self.assertFalse(res_height_err["pass"])
+        self.assertEqual(res_height_err["reason"], "attachment_height_exceeds_roof_height")
+
+        # Invalid importance factor
+        res_ip_err = verify_asce7_nonstructural_component_seismic(
+            w_p_kips=10.0,
+            s_ds=1.0,
+            ap_factor=2.5,
+            rp_factor=6.0,
+            z_height_ft=20.0,
+            h_roof_ft=40.0,
+            f_p_capacity_kips=6.0,
+            importance_factor_ip=1.25,
+        )
+        self.assertFalse(res_ip_err["pass"])
+        self.assertEqual(res_ip_err["reason"], "invalid_importance_factor")
+
+        # NaN and negative input validation
+        res_nan = verify_asce7_nonstructural_component_seismic(
+            w_p_kips=float("nan"),
+            s_ds=1.0,
+            ap_factor=2.5,
+            rp_factor=6.0,
+            z_height_ft=20.0,
+            h_roof_ft=40.0,
+            f_p_capacity_kips=6.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_asce7_nonstructural_component_seismic(
+            w_p_kips=-10.0,
+            s_ds=1.0,
+            ap_factor=2.5,
+            rp_factor=6.0,
+            z_height_ft=20.0,
+            h_roof_ft=40.0,
+            f_p_capacity_kips=6.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_loading_or_capacity")
 
 
 if __name__ == "__main__":

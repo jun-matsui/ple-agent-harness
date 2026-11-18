@@ -3143,3 +3143,81 @@ def verify_nec_equipment_grounding_conductor(
         "upsize_ratio": round(growth_ratio, 4),
         "egc_material": g_mat,
     }
+
+
+def verify_asce7_nonstructural_component_seismic(
+    w_p_kips: float,
+    s_ds: float,
+    ap_factor: float,
+    rp_factor: float,
+    z_height_ft: float,
+    h_roof_ft: float,
+    f_p_capacity_kips: float,
+    importance_factor_ip: float = 1.0,
+) -> Dict[str, Any]:
+    """ASCE 7-16/7-22 Section 13.3.1 seismic design force (Fp) and anchorage capacity gate for nonstructural components."""
+    inputs = [
+        w_p_kips,
+        s_ds,
+        ap_factor,
+        rp_factor,
+        z_height_ft,
+        h_roof_ft,
+        f_p_capacity_kips,
+        importance_factor_ip,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(w_p_kips, s_ds, ap_factor, rp_factor, h_roof_ft, f_p_capacity_kips) <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_loading_or_capacity"}
+    if z_height_ft < 0:
+        return {"pass": False, "reason": "negative_attachment_height"}
+    if z_height_ft > h_roof_ft:
+        return {"pass": False, "reason": "attachment_height_exceeds_roof_height"}
+    if importance_factor_ip not in (1.0, 1.5):
+        return {"pass": False, "reason": "invalid_importance_factor"}
+    if ap_factor < 1.0 or rp_factor < 1.0:
+        return {"pass": False, "reason": "invalid_component_factors"}
+
+    # Elevation ratio z / h (ASCE 7 Section 13.3.1)
+    height_ratio = min(max(z_height_ft / h_roof_ft, 0.0), 1.0)
+
+    # ASCE 7 Eq. 13.3-1 unconstrained horizontal seismic force
+    rp_over_ip = rp_factor / importance_factor_ip
+    f_p_unclamped = (
+        (0.4 * ap_factor * s_ds * w_p_kips / rp_over_ip)
+        * (1.0 + 2.0 * height_ratio)
+    )
+
+    # ASCE 7 Eq. 13.3-2 upper bound limit and Eq. 13.3-3 lower bound limit
+    f_p_max = 1.6 * s_ds * importance_factor_ip * w_p_kips
+    f_p_min = 0.3 * s_ds * importance_factor_ip * w_p_kips
+
+    if f_p_unclamped > f_p_max:
+        f_p_gov = f_p_max
+        gov_limit = "max_limit"
+    elif f_p_unclamped < f_p_min:
+        f_p_gov = f_p_min
+        gov_limit = "min_limit"
+    else:
+        f_p_gov = f_p_unclamped
+        gov_limit = "unclamped"
+
+    # Concurrent vertical seismic force Fpv (ASCE 7 Section 13.3.1 & 12.4.2.2)
+    f_pv = 0.20 * s_ds * w_p_kips
+
+    dcr = f_p_gov / f_p_capacity_kips
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "f_p_kips": round(f_p_gov, 3),
+        "f_p_unclamped_kips": round(f_p_unclamped, 3),
+        "f_p_max_kips": round(f_p_max, 3),
+        "f_p_min_kips": round(f_p_min, 3),
+        "f_pv_kips": round(f_pv, 3),
+        "governing_limit": gov_limit,
+    }

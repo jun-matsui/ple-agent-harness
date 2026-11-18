@@ -1,0 +1,9 @@
+{
+  "score": 49.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asce7_nonstructural_component_seismic",
+    "rationale": "Applies ASCE 7-16/7-22 Chapter 13 Equivalent Lateral Force procedure to determine seismic design forces and vertical effects for MEP equipment, piping, ductwork, and architectural attachments.",
+    "model": "gemini-3.8-flash"
+  }
+}
