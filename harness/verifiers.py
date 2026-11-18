@@ -1516,3 +1516,64 @@ def verify_nec_motor_branch_circuit(
         "ocpd_ok": ocpd_ok,
         "overload_ok": overload_ok,
     }
+
+
+def verify_stormwater_rational_runoff(
+    drainage_areas_acres: Sequence[float],
+    runoff_coefficients: Sequence[float],
+    rainfall_intensity_in_hr: float,
+    capacity_cfs: float,
+    frequency_factor_cf: float = 1.0,
+    time_of_concentration_min: float = 5.0,
+    min_time_of_concentration_min: float = 5.0,
+) -> Dict[str, Any]:
+    """ASCE/WEF & DOT Rational Method peak stormwater runoff and drainage conveyance capacity check."""
+    scalars = [
+        rainfall_intensity_in_hr,
+        capacity_cfs,
+        frequency_factor_cf,
+        time_of_concentration_min,
+        min_time_of_concentration_min,
+    ]
+    if any(math.isnan(val) for val in scalars) or any(
+        math.isnan(a) for a in drainage_areas_acres
+    ) or any(math.isnan(c) for c in runoff_coefficients):
+        return {"pass": False, "reason": "nan_input"}
+    if not drainage_areas_acres or not runoff_coefficients:
+        return {"pass": False, "reason": "empty_subcatchment_list"}
+    if len(drainage_areas_acres) != len(runoff_coefficients):
+        return {"pass": False, "reason": "length_mismatch"}
+    if min(drainage_areas_acres) <= 0:
+        return {"pass": False, "reason": "non_positive_area"}
+    if rainfall_intensity_in_hr <= 0 or capacity_cfs <= 0:
+        return {"pass": False, "reason": "non_positive_intensity_or_capacity"}
+    if any(not (0.0 < c <= 1.0) for c in runoff_coefficients):
+        return {"pass": False, "reason": "invalid_runoff_coefficient"}
+    if frequency_factor_cf < 1.0:
+        return {"pass": False, "reason": "invalid_frequency_factor"}
+    if min_time_of_concentration_min <= 0 or time_of_concentration_min <= 0:
+        return {"pass": False, "reason": "non_positive_tc"}
+    if time_of_concentration_min < min_time_of_concentration_min:
+        return {"pass": False, "reason": "tc_below_minimum"}
+
+    total_area_acres = sum(drainage_areas_acres)
+    composite_c = (
+        sum(a * c for a, c in zip(drainage_areas_acres, runoff_coefficients))
+        / total_area_acres
+    )
+    # Design runoff coefficient adjusted by storm frequency factor Cf (capped at 1.0)
+    design_c = min(composite_c * frequency_factor_cf, 1.0)
+
+    # Rational formula: Q = C * I * A (cfs = unitless * in/hr * acres)
+    q_peak_cfs = design_c * rainfall_intensity_in_hr * total_area_acres
+    dcr = q_peak_cfs / capacity_cfs
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "q_peak_cfs": round(q_peak_cfs, 3),
+        "composite_c": round(composite_c, 4),
+        "design_c": round(design_c, 4),
+        "total_area_acres": round(total_area_acres, 3),
+    }

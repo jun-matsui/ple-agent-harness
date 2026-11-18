@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_stormwater_rational_runoff,
     verify_nec_motor_branch_circuit,
     verify_clay_consolidation_settlement,
     verify_aisc_tension_member,
@@ -1383,6 +1384,82 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_type["pass"])
         self.assertEqual(res_inv_type["reason"], "invalid_ocpd_type")
+
+
+    def test_stormwater_rational_runoff(self) -> None:
+        from harness.verifiers import verify_stormwater_rational_runoff
+
+        res_pass = verify_stormwater_rational_runoff(
+            drainage_areas_acres=[2.5, 1.5, 1.0],
+            runoff_coefficients=[0.90, 0.70, 0.30],
+            rainfall_intensity_in_hr=4.5,
+            capacity_cfs=20.0,
+            frequency_factor_cf=1.1,
+            time_of_concentration_min=10.0,
+            min_time_of_concentration_min=5.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["composite_c"], 0.72, places=3)
+        self.assertAlmostEqual(res_pass["design_c"], 0.792, places=3)
+        self.assertAlmostEqual(res_pass["q_peak_cfs"], 17.82, places=2)
+        self.assertAlmostEqual(res_pass["dcr"], 0.891, places=3)
+
+        res_fail = verify_stormwater_rational_runoff(
+            drainage_areas_acres=[2.5, 1.5, 1.0],
+            runoff_coefficients=[0.90, 0.70, 0.30],
+            rainfall_intensity_in_hr=4.5,
+            capacity_cfs=15.0,
+            frequency_factor_cf=1.1,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        res_tc_err = verify_stormwater_rational_runoff(
+            drainage_areas_acres=[1.0],
+            runoff_coefficients=[0.5],
+            rainfall_intensity_in_hr=3.0,
+            capacity_cfs=5.0,
+            time_of_concentration_min=3.0,
+            min_time_of_concentration_min=5.0,
+        )
+        self.assertFalse(res_tc_err["pass"])
+        self.assertEqual(res_tc_err["reason"], "tc_below_minimum")
+
+        res_mismatch = verify_stormwater_rational_runoff(
+            drainage_areas_acres=[1.0, 2.0],
+            runoff_coefficients=[0.5],
+            rainfall_intensity_in_hr=3.0,
+            capacity_cfs=5.0,
+        )
+        self.assertFalse(res_mismatch["pass"])
+        self.assertEqual(res_mismatch["reason"], "length_mismatch")
+
+        res_empty = verify_stormwater_rational_runoff(
+            drainage_areas_acres=[],
+            runoff_coefficients=[],
+            rainfall_intensity_in_hr=3.0,
+            capacity_cfs=5.0,
+        )
+        self.assertFalse(res_empty["pass"])
+        self.assertEqual(res_empty["reason"], "empty_subcatchment_list")
+
+        res_nan = verify_stormwater_rational_runoff(
+            drainage_areas_acres=[float("nan")],
+            runoff_coefficients=[0.5],
+            rainfall_intensity_in_hr=3.0,
+            capacity_cfs=5.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_coeff_err = verify_stormwater_rational_runoff(
+            drainage_areas_acres=[1.0],
+            runoff_coefficients=[1.2],
+            rainfall_intensity_in_hr=3.0,
+            capacity_cfs=5.0,
+        )
+        self.assertFalse(res_coeff_err["pass"])
+        self.assertEqual(res_coeff_err["reason"], "invalid_runoff_coefficient")
 
 
 if __name__ == "__main__":

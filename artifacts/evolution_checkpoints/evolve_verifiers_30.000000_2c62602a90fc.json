@@ -1,0 +1,9 @@
+{
+  "score": 30.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_stormwater_rational_runoff",
+    "rationale": "Civil stormwater hydrology and drainage conveyance sizing using the Rational Method (Q = C*I*A with composite land-use weighting and frequency factor adjustments) is a core topic across Civil/Water Resources PE exams that is currently missing from the verifier harness.",
+    "model": "gemini-3.8-flash"
+  }
+}
