@@ -1,0 +1,9 @@
+{
+  "score": 37.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_column_axial_load",
+    "rationale": "Closes a critical ACI 318-19 code-verification gap for short reinforced concrete columns subjected to concentric/factored axial compression, enforcing gross steel ratio limits, zero-eccentricity capacity reductions for tied vs. spiral columns, and volumetric spiral confinement limits.",
+    "model": "gemini-3.8-flash"
+  }
+}

@@ -2095,3 +2095,99 @@ def verify_aisc_beam_column_interaction(
         "m_rx_kip_ft": round(m_rx, 2),
         "m_ry_kip_ft": round(m_ry, 2),
     }
+
+
+def verify_aci_column_axial_load(
+    pu_kips: float,
+    ag_in2: float,
+    ast_in2: float,
+    fc_psi: float,
+    fy_psi: float = 60000.0,
+    transverse_type: str = "tied",
+    core_diameter_in: float = 0.0,
+    spiral_pitch_in: float = 0.0,
+    spiral_bar_dia_in: float = 0.0,
+    fyt_psi: float = 60000.0,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 10.6, 22.4.2, & Table 21.2.2 short column axial compressive strength check."""
+    scalars = [
+        pu_kips,
+        ag_in2,
+        ast_in2,
+        fc_psi,
+        fy_psi,
+        core_diameter_in,
+        spiral_pitch_in,
+        spiral_bar_dia_in,
+        fyt_psi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if pu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if min(ag_in2, ast_in2, fc_psi, fy_psi, fyt_psi) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if ast_in2 >= ag_in2:
+        return {"pass": False, "reason": "steel_area_exceeds_gross_area"}
+
+    t_type = transverse_type.strip().lower()
+    if t_type not in ("tied", "spiral"):
+        return {"pass": False, "reason": "invalid_transverse_type"}
+
+    # ACI 318-19 Section 10.6.1.1 longitudinal steel ratio limits (0.01 <= rho_g <= 0.08)
+    rho_g = ast_in2 / ag_in2
+    if not (0.01 <= rho_g <= 0.08):
+        return {
+            "pass": False,
+            "reason": "reinforcement_ratio_out_of_bounds",
+            "rho_g": round(rho_g, 4),
+        }
+
+    # ACI 318-19 Eq. 22.4.2.2 nominal axial strength at zero eccentricity
+    fc_ksi = fc_psi / 1000.0
+    fy_ksi = fy_psi / 1000.0
+    p0_kips = 0.85 * fc_ksi * (ag_in2 - ast_in2) + fy_ksi * ast_in2
+
+    # ACI 318-19 Eq. 22.4.2.1 and Table 21.2.2 reduction factors
+    if t_type == "tied":
+        alpha = 0.80
+        phi = 0.65
+    else:
+        alpha = 0.85
+        phi = 0.75
+
+    pn_max_kips = alpha * p0_kips
+    phi_pn_max_kips = phi * pn_max_kips
+    dcr = pu_kips / phi_pn_max_kips if phi_pn_max_kips > 0 else float("inf")
+
+    # Spiral confinement check per ACI 318-19 Table 10.7.6.5.2 & Section 25.7.3.1
+    spiral_ok = True
+    rho_s_provided = None
+    rho_s_min = None
+    if t_type == "spiral" and core_diameter_in > 0.0:
+        ach_in2 = (math.pi * (core_diameter_in**2)) / 4.0
+        if ach_in2 >= ag_in2:
+            return {"pass": False, "reason": "core_area_exceeds_gross_area"}
+        rho_s_min = 0.45 * ((ag_in2 / ach_in2) - 1.0) * (fc_psi / fyt_psi)
+
+        if spiral_pitch_in > 0.0 and spiral_bar_dia_in > 0.0:
+            a_sp_in2 = (math.pi * (spiral_bar_dia_in**2)) / 4.0
+            rho_s_provided = (4.0 * a_sp_in2) / (spiral_pitch_in * core_diameter_in)
+            clear_spacing_in = spiral_pitch_in - spiral_bar_dia_in
+            spacing_ok = 1.0 <= clear_spacing_in <= 3.0
+            spiral_ok = (rho_s_provided >= rho_s_min) and spacing_ok
+        else:
+            spiral_ok = False
+
+    passed = (dcr <= 1.0) and spiral_ok
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_pn_max_kips": round(phi_pn_max_kips, 2),
+        "p0_kips": round(p0_kips, 2),
+        "rho_g": round(rho_g, 4),
+        "transverse_type": t_type,
+        "phi": phi,
+        "rho_s_provided": round(rho_s_provided, 5) if rho_s_provided is not None else None,
+        "rho_s_min": round(rho_s_min, 5) if rho_s_min is not None else None,
+    }

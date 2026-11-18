@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_column_axial_load,
     verify_aisc_beam_column_interaction,
     verify_asce7_roof_snow_load,
     verify_aci_rebar_development_length,
@@ -1992,6 +1993,109 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_input")
+
+
+    def test_aci_column_axial_load(self) -> None:
+        from harness.verifiers import verify_aci_column_axial_load
+
+        # Standard tied column passing
+        res_tied = verify_aci_column_axial_load(
+            pu_kips=650.0,
+            ag_in2=324.0,
+            ast_in2=8.0,
+            fc_psi=4000.0,
+            fy_psi=60000.0,
+            transverse_type="tied",
+        )
+        self.assertTrue(res_tied["pass"])
+        self.assertAlmostEqual(res_tied["rho_g"], 8.0 / 324.0, places=4)
+        self.assertAlmostEqual(res_tied["p0_kips"], 1554.4, places=1)
+        self.assertAlmostEqual(res_tied["phi_pn_max_kips"], 808.29, places=1)
+        self.assertLess(res_tied["dcr"], 1.0)
+        self.assertEqual(res_tied["phi"], 0.65)
+
+        # Spiral column passing with confinement verification
+        res_spiral = verify_aci_column_axial_load(
+            pu_kips=700.0,
+            ag_in2=314.16,
+            ast_in2=6.0,
+            fc_psi=4000.0,
+            fy_psi=60000.0,
+            transverse_type="spiral",
+            core_diameter_in=17.0,
+            spiral_pitch_in=2.0,
+            spiral_bar_dia_in=0.375,
+            fyt_psi=60000.0,
+        )
+        self.assertTrue(res_spiral["pass"])
+        self.assertEqual(res_spiral["phi"], 0.75)
+        self.assertAlmostEqual(res_spiral["p0_kips"], 1407.74, places=1)
+        self.assertAlmostEqual(res_spiral["phi_pn_max_kips"], 897.44, places=1)
+        self.assertLess(res_spiral["dcr"], 1.0)
+        self.assertGreaterEqual(res_spiral["rho_s_provided"], res_spiral["rho_s_min"])
+
+        # Overloaded tied column failure
+        res_fail_load = verify_aci_column_axial_load(
+            pu_kips=900.0,
+            ag_in2=324.0,
+            ast_in2=8.0,
+            fc_psi=4000.0,
+            transverse_type="tied",
+        )
+        self.assertFalse(res_fail_load["pass"])
+        self.assertGreater(res_fail_load["dcr"], 1.0)
+
+        # Longitudinal steel ratio below minimum (rho_g < 0.01)
+        res_low_steel = verify_aci_column_axial_load(
+            pu_kips=200.0,
+            ag_in2=400.0,
+            ast_in2=2.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_low_steel["pass"])
+        self.assertEqual(res_low_steel["reason"], "reinforcement_ratio_out_of_bounds")
+
+        # Spiral pitch spacing out of bounds (> 3.0 in clear spacing)
+        res_bad_pitch = verify_aci_column_axial_load(
+            pu_kips=500.0,
+            ag_in2=314.16,
+            ast_in2=6.0,
+            fc_psi=4000.0,
+            transverse_type="spiral",
+            core_diameter_in=17.0,
+            spiral_pitch_in=4.5,
+            spiral_bar_dia_in=0.375,
+        )
+        self.assertFalse(res_bad_pitch["pass"])
+
+        # Input error checks
+        res_nan = verify_aci_column_axial_load(
+            pu_kips=float("nan"),
+            ag_in2=324.0,
+            ast_in2=8.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_column_axial_load(
+            pu_kips=-100.0,
+            ag_in2=324.0,
+            ast_in2=8.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_inv_type = verify_aci_column_axial_load(
+            pu_kips=500.0,
+            ag_in2=324.0,
+            ast_in2=8.0,
+            fc_psi=4000.0,
+            transverse_type="bundled",
+        )
+        self.assertFalse(res_inv_type["pass"])
+        self.assertEqual(res_inv_type["reason"], "invalid_transverse_type")
 
 
 if __name__ == "__main__":
