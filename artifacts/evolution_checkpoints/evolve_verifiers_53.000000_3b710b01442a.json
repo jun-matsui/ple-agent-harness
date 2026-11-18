@@ -1,0 +1,9 @@
+{
+  "score": 53.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nrcs_tr55_runoff",
+    "rationale": "NRCS (SCS) TR-55 Runoff Curve Number hydrologic modeling is the universal industry standard for stormwater volume calculation, post-development hydrograph generation, and detention basin sizing across Civil Engineering PLE examinations.",
+    "model": "gemini-3.8-flash"
+  }
+}

@@ -3514,3 +3514,72 @@ def verify_asce7_snow_drift(
         "snow_density_pcf": round(gamma_pcf, 2),
         "drift_required": True,
     }
+
+
+def verify_nrcs_tr55_runoff(
+    rainfall_depth_in: float,
+    curve_number_cn: float,
+    drainage_area_acres: float,
+    storage_capacity_acre_ft: float,
+    initial_abstraction_ratio: float = 0.20,
+    allowable_runoff_depth_in: float = 0.0,
+) -> Dict[str, Any]:
+    """USDA NRCS (SCS) TR-55 National Engineering Handbook Part 630 runoff depth, volume, and storage gate."""
+    scalars = [
+        rainfall_depth_in,
+        curve_number_cn,
+        drainage_area_acres,
+        storage_capacity_acre_ft,
+        initial_abstraction_ratio,
+        allowable_runoff_depth_in,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if rainfall_depth_in < 0:
+        return {"pass": False, "reason": "negative_rainfall_depth"}
+    if drainage_area_acres <= 0 or storage_capacity_acre_ft <= 0:
+        return {"pass": False, "reason": "non_positive_area_or_capacity"}
+    if not (30.0 <= curve_number_cn <= 100.0):
+        return {"pass": False, "reason": "invalid_curve_number"}
+    if not (0.01 <= initial_abstraction_ratio <= 0.50):
+        return {"pass": False, "reason": "invalid_abstraction_ratio"}
+    if allowable_runoff_depth_in < 0:
+        return {"pass": False, "reason": "negative_allowable_depth"}
+
+    # Potential maximum soil retention after runoff begins (S, in inches)
+    s_in = (1000.0 / curve_number_cn) - 10.0
+    ia_in = initial_abstraction_ratio * s_in
+
+    # NRCS TR-55 Eq. 2-1 direct runoff depth (Q, in inches)
+    if rainfall_depth_in <= ia_in:
+        q_in = 0.0
+    else:
+        denom = rainfall_depth_in + (1.0 - initial_abstraction_ratio) * s_in
+        q_in = ((rainfall_depth_in - ia_in) ** 2) / denom if denom > 0 else 0.0
+
+    v_runoff_acft = (q_in / 12.0) * drainage_area_acres
+    v_runoff_cuft = v_runoff_acft * 43560.0
+
+    volume_dcr = v_runoff_acft / storage_capacity_acre_ft
+    if allowable_runoff_depth_in > 0.0:
+        depth_dcr = q_in / allowable_runoff_depth_in
+        gov_dcr = max(volume_dcr, depth_dcr)
+        depth_ok = depth_dcr <= 1.0
+    else:
+        gov_dcr = volume_dcr
+        depth_ok = True
+
+    runoff_fraction = (q_in / rainfall_depth_in) if rainfall_depth_in > 0 else 0.0
+    passed = (volume_dcr <= 1.0) and depth_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "runoff_depth_in": round(q_in, 4),
+        "runoff_volume_acre_ft": round(v_runoff_acft, 4),
+        "runoff_volume_cuft": round(v_runoff_cuft, 2),
+        "potential_retention_s_in": round(s_in, 4),
+        "initial_abstraction_ia_in": round(ia_in, 4),
+        "runoff_fraction": round(runoff_fraction, 4),
+        "runoff_generated": q_in > 0.0,
+    }

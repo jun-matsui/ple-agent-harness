@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nrcs_tr55_runoff,
     verify_asce7_snow_drift,
     verify_aisc_block_shear,
     verify_nfpa13_fire_sprinkler_demand,
@@ -3427,6 +3428,111 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_loading_or_geometry")
+
+
+    def test_nrcs_tr55_runoff(self) -> None:
+        from harness.verifiers import verify_nrcs_tr55_runoff
+
+        # Standard passing 24-hr storm runoff check (P = 5.0 in, CN = 75)
+        res_pass = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=5.0,
+            curve_number_cn=75.0,
+            drainage_area_acres=10.0,
+            storage_capacity_acre_ft=2.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertTrue(res_pass["runoff_generated"])
+        self.assertAlmostEqual(res_pass["potential_retention_s_in"], 3.3333, places=3)
+        self.assertAlmostEqual(res_pass["initial_abstraction_ia_in"], 0.6667, places=3)
+        self.assertAlmostEqual(res_pass["runoff_depth_in"], 2.4493, places=2)
+        self.assertAlmostEqual(res_pass["runoff_volume_acre_ft"], 2.0411, places=2)
+        self.assertAlmostEqual(res_pass["dcr"], 2.0411 / 2.5, places=3)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Low precipitation below initial abstraction (P <= Ia) produces zero runoff
+        res_no_runoff = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=1.0,
+            curve_number_cn=60.0,
+            drainage_area_acres=10.0,
+            storage_capacity_acre_ft=1.0,
+        )
+        self.assertTrue(res_no_runoff["pass"])
+        self.assertFalse(res_no_runoff["runoff_generated"])
+        self.assertEqual(res_no_runoff["runoff_depth_in"], 0.0)
+        self.assertEqual(res_no_runoff["runoff_volume_acre_ft"], 0.0)
+        self.assertEqual(res_no_runoff["dcr"], 0.0)
+
+        # 100% impervious surface (CN = 100 -> S = 0, Q = P)
+        res_impervious = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=4.0,
+            curve_number_cn=100.0,
+            drainage_area_acres=5.0,
+            storage_capacity_acre_ft=2.0,
+        )
+        self.assertTrue(res_impervious["pass"])
+        self.assertEqual(res_impervious["potential_retention_s_in"], 0.0)
+        self.assertEqual(res_impervious["runoff_depth_in"], 4.0)
+        self.assertAlmostEqual(res_impervious["runoff_volume_acre_ft"], (4.0 / 12.0) * 5.0, places=3)
+
+        # Modern NRCS parameter revision (lambda = 0.05)
+        res_lambda05 = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=5.0,
+            curve_number_cn=75.0,
+            drainage_area_acres=10.0,
+            storage_capacity_acre_ft=3.0,
+            initial_abstraction_ratio=0.05,
+        )
+        self.assertTrue(res_lambda05["pass"])
+        self.assertGreater(res_lambda05["runoff_depth_in"], res_pass["runoff_depth_in"])
+
+        # Storage volume exceeded failure (DCR > 1.0)
+        res_fail_vol = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=6.0,
+            curve_number_cn=85.0,
+            drainage_area_acres=20.0,
+            storage_capacity_acre_ft=4.0,
+        )
+        self.assertFalse(res_fail_vol["pass"])
+        self.assertGreater(res_fail_vol["dcr"], 1.0)
+
+        # Allowable runoff depth exceeded failure
+        res_fail_depth = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=5.0,
+            curve_number_cn=80.0,
+            drainage_area_acres=10.0,
+            storage_capacity_acre_ft=5.0,
+            allowable_runoff_depth_in=2.0,
+        )
+        self.assertFalse(res_fail_depth["pass"])
+        self.assertGreater(res_fail_depth["dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=float("nan"),
+            curve_number_cn=75.0,
+            drainage_area_acres=10.0,
+            storage_capacity_acre_ft=2.5,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=-2.0,
+            curve_number_cn=75.0,
+            drainage_area_acres=10.0,
+            storage_capacity_acre_ft=2.5,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_rainfall_depth")
+
+        res_inv_cn = verify_nrcs_tr55_runoff(
+            rainfall_depth_in=4.0,
+            curve_number_cn=115.0,
+            drainage_area_acres=10.0,
+            storage_capacity_acre_ft=2.5,
+        )
+        self.assertFalse(res_inv_cn["pass"])
+        self.assertEqual(res_inv_cn["reason"], "invalid_curve_number")
 
 
 if __name__ == "__main__":
