@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_hvac_cooling_load_capacity,
     verify_aci_punching_shear,
     verify_stormwater_rational_runoff,
     verify_nec_motor_branch_circuit,
@@ -1544,6 +1545,92 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_loc["pass"])
         self.assertEqual(res_inv_loc["reason"], "invalid_column_location")
+
+
+    def test_hvac_cooling_load_capacity(self) -> None:
+        from harness.verifiers import verify_hvac_cooling_load_capacity
+
+        res_pass = verify_hvac_cooling_load_capacity(
+            sensible_load_btuh=36000.0,
+            latent_load_btuh=12000.0,
+            room_temp_db_f=75.0,
+            supply_temp_db_f=55.0,
+            design_airflow_cfm=1800.0,
+            coil_capacity_tons=4.5,
+            elevation_ft=0.0,
+            room_volume_cuft=12000.0,
+            min_ach=6.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["q_total_btuh"], 48000.0)
+        self.assertEqual(res_pass["tons_required"], 4.0)
+        self.assertEqual(res_pass["shr"], 0.75)
+        self.assertAlmostEqual(res_pass["required_cfm"], 1666.67, places=1)
+        self.assertLess(res_pass["airflow_dcr"], 1.0)
+        self.assertLess(res_pass["capacity_dcr"], 1.0)
+        self.assertEqual(res_pass["ach"], 9.0)
+
+        # High elevation altitude derating triggers airflow deficit
+        res_altitude = verify_hvac_cooling_load_capacity(
+            sensible_load_btuh=36000.0,
+            latent_load_btuh=12000.0,
+            room_temp_db_f=75.0,
+            supply_temp_db_f=55.0,
+            design_airflow_cfm=1800.0,
+            coil_capacity_tons=4.5,
+            elevation_ft=5280.0,
+        )
+        self.assertFalse(res_altitude["pass"])
+        self.assertGreater(res_altitude["airflow_dcr"], 1.0)
+        self.assertLess(res_altitude["density_ratio"], 0.85)
+
+        # Undersized coil capacity failure
+        res_undersized_coil = verify_hvac_cooling_load_capacity(
+            sensible_load_btuh=36000.0,
+            latent_load_btuh=12000.0,
+            room_temp_db_f=75.0,
+            supply_temp_db_f=55.0,
+            design_airflow_cfm=2000.0,
+            coil_capacity_tons=3.5,
+        )
+        self.assertFalse(res_undersized_coil["pass"])
+        self.assertGreater(res_undersized_coil["capacity_dcr"], 1.0)
+
+        # Room temperature equal to or less than supply temperature
+        res_inv_temp = verify_hvac_cooling_load_capacity(
+            sensible_load_btuh=36000.0,
+            latent_load_btuh=12000.0,
+            room_temp_db_f=55.0,
+            supply_temp_db_f=55.0,
+            design_airflow_cfm=1800.0,
+            coil_capacity_tons=4.5,
+        )
+        self.assertFalse(res_inv_temp["pass"])
+        self.assertEqual(res_inv_temp["reason"], "supply_temp_not_below_room_temp")
+
+        # Negative latent load
+        res_neg_latent = verify_hvac_cooling_load_capacity(
+            sensible_load_btuh=36000.0,
+            latent_load_btuh=-500.0,
+            room_temp_db_f=75.0,
+            supply_temp_db_f=55.0,
+            design_airflow_cfm=1800.0,
+            coil_capacity_tons=4.5,
+        )
+        self.assertFalse(res_neg_latent["pass"])
+        self.assertEqual(res_neg_latent["reason"], "negative_latent_load")
+
+        # NaN input
+        res_nan = verify_hvac_cooling_load_capacity(
+            sensible_load_btuh=float("nan"),
+            latent_load_btuh=12000.0,
+            room_temp_db_f=75.0,
+            supply_temp_db_f=55.0,
+            design_airflow_cfm=1800.0,
+            coil_capacity_tons=4.5,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+{
+  "score": 32.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_hvac_cooling_load_capacity",
+    "rationale": "Evaluates commercial HVAC cooling coil capacity, required sensible airflow CFM with barometric elevation derating, sensible heat ratio (SHR), and minimum air changes per hour (ACH) per ASHRAE Fundamentals and Standard 183. It closes a critical physical verification gap in Mechanical PLE exams by preventing undersized cooling coils and inadequate supply airflow in high-altitude or high-latent environments.",
+    "model": "gemini-3.8-flash"
+  }
+}

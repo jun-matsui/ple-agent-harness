@@ -1653,3 +1653,74 @@ def verify_aci_punching_shear(
         "lambda_s": round(lambda_s, 4),
         "governing_equation": governing_eq,
     }
+
+
+def verify_hvac_cooling_load_capacity(
+    sensible_load_btuh: float,
+    latent_load_btuh: float,
+    room_temp_db_f: float,
+    supply_temp_db_f: float,
+    design_airflow_cfm: float,
+    coil_capacity_tons: float,
+    elevation_ft: float = 0.0,
+    room_volume_cuft: float = 0.0,
+    min_ach: float = 0.0,
+) -> Dict[str, Any]:
+    """ASHRAE Fundamentals & Standard 183 HVAC cooling load, supply airflow, and coil capacity gate."""
+    inputs = [
+        sensible_load_btuh,
+        latent_load_btuh,
+        room_temp_db_f,
+        supply_temp_db_f,
+        design_airflow_cfm,
+        coil_capacity_tons,
+        elevation_ft,
+        room_volume_cuft,
+        min_ach,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if min(sensible_load_btuh, design_airflow_cfm, coil_capacity_tons) <= 0:
+        return {"pass": False, "reason": "non_positive_load_or_capacity"}
+    if latent_load_btuh < 0:
+        return {"pass": False, "reason": "negative_latent_load"}
+    if room_temp_db_f <= supply_temp_db_f:
+        return {"pass": False, "reason": "supply_temp_not_below_room_temp"}
+    if elevation_ft < -1000.0 or elevation_ft > 30000.0:
+        return {"pass": False, "reason": "invalid_elevation"}
+    if room_volume_cuft < 0 or min_ach < 0:
+        return {"pass": False, "reason": "negative_volume_or_ach"}
+
+    # US Standard Atmosphere barometric pressure and air density correction ratio
+    p_atm_psia = 14.696 * ((1.0 - 0.0000068756 * elevation_ft) ** 5.2559)
+    density_ratio = p_atm_psia / 14.696
+    c_s = 1.08 * density_ratio
+
+    delta_t = room_temp_db_f - supply_temp_db_f
+    required_cfm = sensible_load_btuh / (c_s * delta_t)
+    airflow_dcr = required_cfm / design_airflow_cfm
+
+    q_total_btuh = sensible_load_btuh + latent_load_btuh
+    tons_required = q_total_btuh / 12000.0
+    capacity_dcr = tons_required / coil_capacity_tons
+    shr = sensible_load_btuh / q_total_btuh
+
+    ach = None
+    ach_ok = True
+    if room_volume_cuft > 0.0:
+        ach = (design_airflow_cfm * 60.0) / room_volume_cuft
+        if min_ach > 0.0:
+            ach_ok = ach >= min_ach
+
+    passed = (airflow_dcr <= 1.0) and (capacity_dcr <= 1.0) and ach_ok
+    return {
+        "pass": passed,
+        "airflow_dcr": round(airflow_dcr, 4),
+        "capacity_dcr": round(capacity_dcr, 4),
+        "q_total_btuh": round(q_total_btuh, 2),
+        "tons_required": round(tons_required, 2),
+        "required_cfm": round(required_cfm, 2),
+        "shr": round(shr, 4),
+        "density_ratio": round(density_ratio, 4),
+        "ach": round(ach, 2) if ach is not None else None,
+    }
