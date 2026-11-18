@@ -1,0 +1,9 @@
+{
+  "score": 60.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_open_channel_trapezoidal_flow",
+    "rationale": "Civil and Water Resources engineers frequently size drainage ditches, bypass channels, and canals requiring deterministic checks on Manning's conveyance capacity, permissible shear stress, freeboard, and Froude flow regime per FHWA HEC-15 and NRCS NEH standards.",
+    "model": "gemini-3.8-flash"
+  }
+}

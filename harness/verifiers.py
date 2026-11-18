@@ -4225,3 +4225,131 @@ def verify_weir_discharge_capacity(
         "capacity_ok": capacity_ok,
         "freeboard_ok": freeboard_ok,
     }
+
+
+def verify_open_channel_trapezoidal_flow(
+    q_design_cfs: float,
+    bottom_width_ft: float,
+    flow_depth_ft: float,
+    channel_slope_ft_per_ft: float,
+    side_slope_z: float = 0.0,
+    manning_n: float = 0.030,
+    channel_total_depth_ft: float = 0.0,
+    min_freeboard_ft: float = 0.0,
+    max_velocity_fps: float = 8.0,
+    min_velocity_fps: float = 1.5,
+    permissible_shear_psf: float = 0.0,
+    g_fps2: float = 32.174,
+) -> Dict[str, Any]:
+    """Civil/Water Resources trapezoidal and rectangular open channel conveyance, shear stress, and freeboard gate via Manning's equation."""
+    scalars = [
+        q_design_cfs,
+        bottom_width_ft,
+        flow_depth_ft,
+        channel_slope_ft_per_ft,
+        side_slope_z,
+        manning_n,
+        channel_total_depth_ft,
+        min_freeboard_ft,
+        max_velocity_fps,
+        min_velocity_fps,
+        permissible_shear_psf,
+        g_fps2,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if q_design_cfs < 0:
+        return {"pass": False, "reason": "negative_flow_input"}
+    if (
+        min(
+            bottom_width_ft,
+            flow_depth_ft,
+            channel_slope_ft_per_ft,
+            manning_n,
+            max_velocity_fps,
+            g_fps2,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_channel_slope"}
+    if side_slope_z < 0:
+        return {"pass": False, "reason": "negative_side_slope"}
+    if min_velocity_fps < 0 or min_velocity_fps >= max_velocity_fps:
+        return {"pass": False, "reason": "invalid_velocity_limits"}
+    if min_freeboard_ft < 0 or permissible_shear_psf < 0:
+        return {"pass": False, "reason": "negative_limit_parameter"}
+    if channel_total_depth_ft > 0.0 and flow_depth_ft > channel_total_depth_ft:
+        return {"pass": False, "reason": "flow_depth_exceeds_channel_depth"}
+
+    # Cross-sectional hydraulic geometry for trapezoidal section (z:1 H:V)
+    b = bottom_width_ft
+    y = flow_depth_ft
+    z = side_slope_z
+
+    area_ft2 = (b + z * y) * y
+    perimeter_ft = b + 2.0 * y * math.sqrt(1.0 + (z**2))
+    hydraulic_radius_ft = area_ft2 / perimeter_ft
+    top_width_ft = b + 2.0 * z * y
+    hydraulic_depth_ft = area_ft2 / top_width_ft
+
+    # Manning's equation for normal discharge capacity (US Customary units)
+    v_normal_fps = (
+        (1.486 / manning_n)
+        * (hydraulic_radius_ft ** (2.0 / 3.0))
+        * math.sqrt(channel_slope_ft_per_ft)
+    )
+    q_capacity_cfs = v_normal_fps * area_ft2
+
+    # Froude number and flow regime classification
+    froude = v_normal_fps / math.sqrt(g_fps2 * hydraulic_depth_ft)
+    if abs(froude - 1.0) < 1e-4:
+        flow_regime = "critical"
+    elif froude < 1.0:
+        flow_regime = "subcritical"
+    else:
+        flow_regime = "supercritical"
+
+    # Boundary tractive shear stress on channel bed (psf): tau = gamma * y * S
+    gamma_w = 62.4
+    tau_bed_psf = gamma_w * y * channel_slope_ft_per_ft
+
+    # Demand capacity evaluations
+    flow_dcr = q_design_cfs / q_capacity_cfs if q_capacity_cfs > 0 else float("inf")
+    capacity_ok = flow_dcr <= 1.0
+    velocity_ok = min_velocity_fps <= v_normal_fps <= max_velocity_fps
+
+    freeboard_ft = None
+    freeboard_ok = True
+    if channel_total_depth_ft > 0.0:
+        freeboard_ft = channel_total_depth_ft - y
+        if min_freeboard_ft > 0.0:
+            freeboard_ok = freeboard_ft >= min_freeboard_ft
+
+    shear_dcr = None
+    shear_ok = True
+    if permissible_shear_psf > 0.0:
+        shear_dcr = tau_bed_psf / permissible_shear_psf
+        shear_ok = shear_dcr <= 1.0
+
+    dcr_candidates = [flow_dcr]
+    if shear_dcr is not None:
+        dcr_candidates.append(shear_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = capacity_ok and velocity_ok and freeboard_ok and shear_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "q_capacity_cfs": round(q_capacity_cfs, 3),
+        "v_normal_fps": round(v_normal_fps, 3),
+        "flow_area_sqft": round(area_ft2, 3),
+        "hydraulic_radius_ft": round(hydraulic_radius_ft, 3),
+        "froude_number": round(froude, 3),
+        "flow_regime": flow_regime,
+        "shear_stress_psf": round(tau_bed_psf, 4),
+        "freeboard_ft": round(freeboard_ft, 3) if freeboard_ft is not None else None,
+        "capacity_ok": capacity_ok,
+        "velocity_ok": velocity_ok,
+        "freeboard_ok": freeboard_ok,
+        "shear_ok": shear_ok,
+    }

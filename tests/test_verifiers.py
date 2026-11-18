@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_open_channel_trapezoidal_flow,
     verify_weir_discharge_capacity,
     verify_water_hammer_surge,
     verify_infinite_slope_stability,
@@ -4164,6 +4165,141 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_type["pass"])
         self.assertEqual(res_inv_type["reason"], "invalid_weir_type")
+
+
+    def test_open_channel_trapezoidal_flow(self) -> None:
+        from harness.verifiers import verify_open_channel_trapezoidal_flow
+
+        # Standard passing subcritical trapezoidal channel (2H:1V side slopes)
+        res_pass = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=45.0,
+            bottom_width_ft=6.0,
+            flow_depth_ft=2.0,
+            channel_slope_ft_per_ft=0.002,
+            side_slope_z=2.0,
+            manning_n=0.030,
+            channel_total_depth_ft=3.5,
+            min_freeboard_ft=1.0,
+            permissible_shear_psf=0.50,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["flow_regime"], "subcritical")
+        self.assertEqual(res_pass["flow_area_sqft"], 20.0)
+        self.assertAlmostEqual(res_pass["hydraulic_radius_ft"], 1.338, places=3)
+        self.assertAlmostEqual(res_pass["v_normal_fps"], 2.690, places=2)
+        self.assertAlmostEqual(res_pass["q_capacity_cfs"], 53.80, places=1)
+        self.assertAlmostEqual(res_pass["froude_number"], 0.397, places=2)
+        self.assertAlmostEqual(res_pass["shear_stress_psf"], 0.2496, places=3)
+        self.assertEqual(res_pass["freeboard_ft"], 1.5)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Rectangular channel passing (side_slope_z = 0)
+        res_rect = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=30.0,
+            bottom_width_ft=5.0,
+            flow_depth_ft=2.0,
+            channel_slope_ft_per_ft=0.003,
+            side_slope_z=0.0,
+            manning_n=0.020,
+        )
+        self.assertTrue(res_rect["pass"])
+        self.assertEqual(res_rect["flow_area_sqft"], 10.0)
+        self.assertGreater(res_rect["q_capacity_cfs"], 30.0)
+
+        # Supercritical steep slope regime check
+        res_super = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=80.0,
+            bottom_width_ft=4.0,
+            flow_depth_ft=1.5,
+            channel_slope_ft_per_ft=0.035,
+            side_slope_z=1.5,
+            manning_n=0.025,
+            max_velocity_fps=15.0,
+        )
+        self.assertTrue(res_super["pass"])
+        self.assertEqual(res_super["flow_regime"], "supercritical")
+        self.assertGreater(res_super["froude_number"], 1.0)
+
+        # Discharge demand exceeding channel capacity failure
+        res_fail_cap = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=70.0,
+            bottom_width_ft=6.0,
+            flow_depth_ft=2.0,
+            channel_slope_ft_per_ft=0.002,
+            side_slope_z=2.0,
+            manning_n=0.030,
+        )
+        self.assertFalse(res_fail_cap["pass"])
+        self.assertFalse(res_fail_cap["capacity_ok"])
+        self.assertGreater(res_fail_cap["dcr"], 1.0)
+
+        # Freeboard violation failure
+        res_fail_fb = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=40.0,
+            bottom_width_ft=6.0,
+            flow_depth_ft=2.0,
+            channel_slope_ft_per_ft=0.002,
+            side_slope_z=2.0,
+            channel_total_depth_ft=2.5,
+            min_freeboard_ft=1.0,
+        )
+        self.assertFalse(res_fail_fb["pass"])
+        self.assertFalse(res_fail_fb["freeboard_ok"])
+        self.assertEqual(res_fail_fb["freeboard_ft"], 0.5)
+
+        # Bed shear stress exceeding permissible lining threshold
+        res_fail_shear = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=45.0,
+            bottom_width_ft=6.0,
+            flow_depth_ft=2.0,
+            channel_slope_ft_per_ft=0.005,
+            side_slope_z=2.0,
+            permissible_shear_psf=0.40,
+        )
+        self.assertFalse(res_fail_shear["pass"])
+        self.assertFalse(res_fail_shear["shear_ok"])
+        self.assertGreater(res_fail_shear["shear_stress_psf"], 0.40)
+
+        # Flow depth exceeding total channel depth error
+        res_overflow = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=40.0,
+            bottom_width_ft=6.0,
+            flow_depth_ft=3.0,
+            channel_slope_ft_per_ft=0.002,
+            channel_total_depth_ft=2.5,
+        )
+        self.assertFalse(res_overflow["pass"])
+        self.assertEqual(res_overflow["reason"], "flow_depth_exceeds_channel_depth")
+
+        # Input error validation
+        res_nan = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=float("nan"),
+            bottom_width_ft=6.0,
+            flow_depth_ft=2.0,
+            channel_slope_ft_per_ft=0.002,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=40.0,
+            bottom_width_ft=-6.0,
+            flow_depth_ft=2.0,
+            channel_slope_ft_per_ft=0.002,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_channel_slope")
+
+        res_inv_limits = verify_open_channel_trapezoidal_flow(
+            q_design_cfs=40.0,
+            bottom_width_ft=6.0,
+            flow_depth_ft=2.0,
+            channel_slope_ft_per_ft=0.002,
+            min_velocity_fps=8.0,
+            max_velocity_fps=4.0,
+        )
+        self.assertFalse(res_inv_limits["pass"])
+        self.assertEqual(res_inv_limits["reason"], "invalid_velocity_limits")
 
 
 if __name__ == "__main__":
