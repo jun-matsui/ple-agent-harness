@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_beam_deflection,
     verify_aci_shear_friction,
     verify_ashrae_fan_power_limitation,
     verify_nfpa14_standpipe_demand,
@@ -5158,6 +5159,108 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_shear_load")
+
+
+    def test_aci_beam_deflection(self) -> None:
+        from harness.verifiers import verify_aci_beam_deflection
+
+        # Standard passing simply supported concrete beam under moderate service moments
+        res_pass = verify_aci_beam_deflection(
+            span_ft=24.0,
+            b_in=12.0,
+            h_in=24.0,
+            d_in=21.5,
+            as_in2=3.0,
+            fc_psi=4000.0,
+            m_dead_kip_ft=30.0,
+            m_live_kip_ft=20.0,
+            as_prime_in2=0.0,
+            time_factor_xi=2.0,
+            live_deflection_limit_ratio=360.0,
+            total_deflection_limit_ratio=240.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["ig_gross_in4"], 13824.0)
+        self.assertAlmostEqual(res_pass["m_cr_kip_ft"], 45.54, places=1)
+        self.assertAlmostEqual(res_pass["allowable_live_in"], 288.0 / 360.0, places=2)
+        self.assertAlmostEqual(res_pass["allowable_total_in"], 288.0 / 240.0, places=2)
+        self.assertLess(res_pass["delta_live_in"], res_pass["allowable_live_in"])
+        self.assertLess(res_pass["delta_total_in"], res_pass["allowable_total_in"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["live_deflection_ok"])
+        self.assertTrue(res_pass["total_deflection_ok"])
+
+        # Compression steel reducing long-term creep deflection
+        res_doubly = verify_aci_beam_deflection(
+            span_ft=24.0,
+            b_in=12.0,
+            h_in=24.0,
+            d_in=21.5,
+            as_in2=3.0,
+            fc_psi=4000.0,
+            m_dead_kip_ft=30.0,
+            m_live_kip_ft=20.0,
+            as_prime_in2=1.5,
+        )
+        self.assertTrue(res_doubly["pass"])
+        self.assertLess(res_doubly["lambda_delta"], res_pass["lambda_delta"])
+        self.assertLess(res_doubly["delta_total_in"], res_pass["delta_total_in"])
+
+        # Service overload exceeding total deflection limit
+        res_fail = verify_aci_beam_deflection(
+            span_ft=30.0,
+            b_in=12.0,
+            h_in=20.0,
+            d_in=17.5,
+            as_in2=3.5,
+            fc_psi=4000.0,
+            m_dead_kip_ft=65.0,
+            m_live_kip_ft=45.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Geometry error: effective depth d exceeds beam total height h
+        res_geom_err = verify_aci_beam_deflection(
+            span_ft=20.0,
+            b_in=12.0,
+            h_in=20.0,
+            d_in=22.0,
+            as_in2=2.0,
+            fc_psi=4000.0,
+            m_dead_kip_ft=20.0,
+            m_live_kip_ft=15.0,
+        )
+        self.assertFalse(res_geom_err["pass"])
+        self.assertEqual(res_geom_err["reason"], "effective_depth_exceeds_height")
+
+        # NaN input error handling
+        res_nan = verify_aci_beam_deflection(
+            span_ft=float("nan"),
+            b_in=12.0,
+            h_in=24.0,
+            d_in=21.5,
+            as_in2=3.0,
+            fc_psi=4000.0,
+            m_dead_kip_ft=30.0,
+            m_live_kip_ft=20.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Negative load input validation
+        res_neg = verify_aci_beam_deflection(
+            span_ft=24.0,
+            b_in=12.0,
+            h_in=24.0,
+            d_in=21.5,
+            as_in2=3.0,
+            fc_psi=4000.0,
+            m_dead_kip_ft=-10.0,
+            m_live_kip_ft=20.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_moment_input")
 
 
 if __name__ == "__main__":

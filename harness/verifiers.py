@@ -5223,3 +5223,158 @@ def verify_aci_shear_friction(
         "friction_coeff_mu": round(mu, 3),
         "governing_limit_state": limit_state,
     }
+
+
+def verify_aci_beam_deflection(
+    span_ft: float,
+    b_in: float,
+    h_in: float,
+    d_in: float,
+    as_in2: float,
+    fc_psi: float,
+    m_dead_kip_ft: float,
+    m_live_kip_ft: float,
+    as_prime_in2: float = 0.0,
+    time_factor_xi: float = 2.0,
+    live_deflection_limit_ratio: float = 360.0,
+    total_deflection_limit_ratio: float = 240.0,
+    lambda_factor: float = 1.0,
+    es_psi: float = 29000000.0,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 24.2 immediate and long-term deflection check for reinforced concrete beams."""
+    scalars = [
+        span_ft,
+        b_in,
+        h_in,
+        d_in,
+        as_in2,
+        fc_psi,
+        m_dead_kip_ft,
+        m_live_kip_ft,
+        as_prime_in2,
+        time_factor_xi,
+        live_deflection_limit_ratio,
+        total_deflection_limit_ratio,
+        lambda_factor,
+        es_psi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            span_ft,
+            b_in,
+            h_in,
+            d_in,
+            as_in2,
+            fc_psi,
+            live_deflection_limit_ratio,
+            total_deflection_limit_ratio,
+            lambda_factor,
+            es_psi,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if m_dead_kip_ft < 0 or m_live_kip_ft < 0:
+        return {"pass": False, "reason": "negative_moment_input"}
+    if as_prime_in2 < 0 or time_factor_xi < 0:
+        return {"pass": False, "reason": "negative_steel_or_time_factor"}
+    if d_in >= h_in:
+        return {"pass": False, "reason": "effective_depth_exceeds_height"}
+
+    # Modulus of elasticity of concrete (ACI 318-19 Section 19.2.2.1) and modular ratio n
+    ec_psi = 57000.0 * math.sqrt(fc_psi)
+    ec_ksi = ec_psi / 1000.0
+    n = es_psi / ec_psi
+
+    # Gross section properties and cracking moment Mcr (ACI 318-19 Section 24.2.3.5)
+    ig_in4 = (b_in * (h_in**3)) / 12.0
+    yt_in = h_in / 2.0
+    fr_psi = 7.5 * lambda_factor * math.sqrt(fc_psi)
+    m_cr_kip_in = (fr_psi * ig_in4 / yt_in) / 1000.0
+    m_cr_kip_ft = m_cr_kip_in / 12.0
+    m_23cr_kip_in = (2.0 / 3.0) * m_cr_kip_in
+
+    # Cracked transformed section neutral axis depth c (in)
+    d_prime_in = max(h_in - d_in, 1.5)
+    a_quad = 0.5 * b_in
+    b_quad = n * as_in2 + (n - 1.0) * as_prime_in2
+    c_quad = -(n * as_in2 * d_in + (n - 1.0) * as_prime_in2 * d_prime_in)
+    disc = (b_quad**2) - (4.0 * a_quad * c_quad)
+    c_in = (-b_quad + math.sqrt(disc)) / (2.0 * a_quad)
+
+    # Cracked moment of inertia Icr
+    icr_in4 = (
+        (b_in * (c_in**3)) / 3.0
+        + n * as_in2 * ((d_in - c_in) ** 2)
+        + (n - 1.0) * as_prime_in2 * ((c_in - d_prime_in) ** 2)
+    )
+
+    def calc_ie(m_kip_in: float) -> float:
+        if m_kip_in <= m_23cr_kip_in:
+            return ig_in4
+        ratio_sq = (m_23cr_kip_in / m_kip_in) ** 2
+        denom = 1.0 - ratio_sq * (1.0 - (icr_in4 / ig_in4))
+        if denom <= 0:
+            return ig_in4
+        return min(icr_in4 / denom, ig_in4)
+
+    span_in = span_ft * 12.0
+    m_dead_in = m_dead_kip_ft * 12.0
+    m_total_in = (m_dead_kip_ft + m_live_kip_ft) * 12.0
+
+    # Immediate dead load deflection
+    if m_dead_in > 0:
+        ie_dead = calc_ie(m_dead_in)
+        delta_dead_in = (5.0 * m_dead_in * (span_in**2)) / (48.0 * ec_ksi * ie_dead)
+    else:
+        ie_dead = ig_in4
+        delta_dead_in = 0.0
+
+    # Immediate total (dead + live) deflection
+    if m_total_in > 0:
+        ie_total = calc_ie(m_total_in)
+        delta_total_imm_in = (5.0 * m_total_in * (span_in**2)) / (48.0 * ec_ksi * ie_total)
+    else:
+        ie_total = ig_in4
+        delta_total_imm_in = 0.0
+
+    # ACI 318-19 Section 24.2.3.1 immediate live load deflection
+    delta_live_in = max(0.0, delta_total_imm_in - delta_dead_in)
+
+    # Long-term creep and shrinkage factor lambda_delta (ACI 318-19 Section 24.2.4.1.1)
+    rho_prime = as_prime_in2 / (b_in * d_in)
+    lambda_delta = time_factor_xi / (1.0 + 50.0 * rho_prime)
+
+    # Long-term total deflection (immediate live + sustained dead creep)
+    delta_sustained_creep_in = lambda_delta * delta_dead_in
+    delta_total_in = delta_live_in + delta_dead_in + delta_sustained_creep_in
+
+    # Allowable deflection thresholds (ACI 318-19 Table 24.2.2)
+    allowable_live_in = span_in / live_deflection_limit_ratio
+    allowable_total_in = span_in / total_deflection_limit_ratio
+
+    live_dcr = delta_live_in / allowable_live_in if allowable_live_in > 0 else float("inf")
+    total_dcr = delta_total_in / allowable_total_in if allowable_total_in > 0 else float("inf")
+    gov_dcr = max(live_dcr, total_dcr)
+
+    passed = (live_dcr <= 1.0) and (total_dcr <= 1.0)
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "live_dcr": round(live_dcr, 4),
+        "total_dcr": round(total_dcr, 4),
+        "delta_live_in": round(delta_live_in, 4),
+        "delta_total_in": round(delta_total_in, 4),
+        "delta_dead_in": round(delta_dead_in, 4),
+        "allowable_live_in": round(allowable_live_in, 3),
+        "allowable_total_in": round(allowable_total_in, 3),
+        "ie_effective_in4": round(ie_total, 1),
+        "ig_gross_in4": round(ig_in4, 1),
+        "icr_cracked_in4": round(icr_in4, 1),
+        "m_cr_kip_ft": round(m_cr_kip_ft, 2),
+        "lambda_delta": round(lambda_delta, 3),
+        "live_deflection_ok": live_dcr <= 1.0,
+        "total_deflection_ok": total_dcr <= 1.0,
+    }
