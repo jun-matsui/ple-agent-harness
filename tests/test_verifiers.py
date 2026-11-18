@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_cooling_tower_performance,
     verify_nfpa92_stairwell_pressurization,
     verify_open_channel_trapezoidal_flow,
     verify_weir_discharge_capacity,
@@ -4409,6 +4410,128 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_setback["pass"])
         self.assertEqual(res_setback["reason"], "latch_setback_exceeds_door_width")
+
+
+    def test_cooling_tower_performance(self) -> None:
+        from harness.verifiers import verify_cooling_tower_performance
+
+        # Standard passing commercial cooling tower check (900 gpm, 95F in / 85F out, 78F wet-bulb)
+        res_pass = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=900.0,
+            t_hot_water_in_f=95.0,
+            t_cold_water_out_f=85.0,
+            wet_bulb_temp_f=78.0,
+            tower_capacity_tons=350.0,
+            cycles_of_concentration=4.0,
+            min_approach_f=5.0,
+            max_makeup_gpm=12.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["range_f"], 10.0)
+        self.assertEqual(res_pass["approach_f"], 7.0)
+        self.assertEqual(res_pass["q_rejected_btuh"], 4500000.0)
+        self.assertEqual(res_pass["tons_required"], 300.0)
+        self.assertAlmostEqual(res_pass["dcr"], 300.0 / 350.0, places=3)
+        self.assertAlmostEqual(res_pass["evaporation_gpm"], 7.2, places=2)
+        self.assertAlmostEqual(res_pass["drift_gpm"], 0.045, places=3)
+        self.assertAlmostEqual(res_pass["blowdown_gpm"], 2.355, places=3)
+        self.assertAlmostEqual(res_pass["makeup_gpm"], 9.6, places=2)
+        self.assertTrue(res_pass["approach_ok"])
+        self.assertTrue(res_pass["thermal_ok"])
+        self.assertTrue(res_pass["makeup_ok"])
+
+        # Undersized tower thermal capacity failure (DCR > 1.0)
+        res_fail_cap = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=900.0,
+            t_hot_water_in_f=95.0,
+            t_cold_water_out_f=85.0,
+            wet_bulb_temp_f=78.0,
+            tower_capacity_tons=250.0,
+        )
+        self.assertFalse(res_fail_cap["pass"])
+        self.assertFalse(res_fail_cap["thermal_ok"])
+        self.assertGreater(res_fail_cap["dcr"], 1.0)
+
+        # Approach violation (approach < 5.0 F thermodynamic threshold)
+        res_approach_fail = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=900.0,
+            t_hot_water_in_f=95.0,
+            t_cold_water_out_f=81.0,
+            wet_bulb_temp_f=78.0,
+            tower_capacity_tons=500.0,
+            min_approach_f=5.0,
+        )
+        self.assertFalse(res_approach_fail["pass"])
+        self.assertFalse(res_approach_fail["approach_ok"])
+        self.assertEqual(res_approach_fail["approach_f"], 3.0)
+
+        # Makeup water flow capacity exceeded
+        res_makeup_fail = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=900.0,
+            t_hot_water_in_f=95.0,
+            t_cold_water_out_f=85.0,
+            wet_bulb_temp_f=78.0,
+            tower_capacity_tons=350.0,
+            max_makeup_gpm=8.0,
+        )
+        self.assertFalse(res_makeup_fail["pass"])
+        self.assertFalse(res_makeup_fail["makeup_ok"])
+        self.assertGreater(res_makeup_fail["dcr"], 1.0)
+
+        # Thermodynamic violation: cold water at or below ambient wet bulb
+        res_2nd_law = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=900.0,
+            t_hot_water_in_f=95.0,
+            t_cold_water_out_f=75.0,
+            wet_bulb_temp_f=78.0,
+            tower_capacity_tons=350.0,
+        )
+        self.assertFalse(res_2nd_law["pass"])
+        self.assertEqual(res_2nd_law["reason"], "cold_water_below_wet_bulb")
+
+        # Thermal violation: hot water not cooled
+        res_heat_err = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=900.0,
+            t_hot_water_in_f=85.0,
+            t_cold_water_out_f=90.0,
+            wet_bulb_temp_f=75.0,
+            tower_capacity_tons=350.0,
+        )
+        self.assertFalse(res_heat_err["pass"])
+        self.assertEqual(res_heat_err["reason"], "hot_water_not_cooled")
+
+        # Invalid cycles of concentration (COC <= 1.0)
+        res_coc_err = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=900.0,
+            t_hot_water_in_f=95.0,
+            t_cold_water_out_f=85.0,
+            wet_bulb_temp_f=78.0,
+            tower_capacity_tons=350.0,
+            cycles_of_concentration=1.0,
+        )
+        self.assertFalse(res_coc_err["pass"])
+        self.assertEqual(res_coc_err["reason"], "invalid_cycles_of_concentration")
+
+        # Input error validation checks
+        res_nan = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=float("nan"),
+            t_hot_water_in_f=95.0,
+            t_cold_water_out_f=85.0,
+            wet_bulb_temp_f=78.0,
+            tower_capacity_tons=350.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_cooling_tower_performance(
+            cooling_water_flow_gpm=-900.0,
+            t_hot_water_in_f=95.0,
+            t_cold_water_out_f=85.0,
+            wet_bulb_temp_f=78.0,
+            tower_capacity_tons=350.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_flow_or_capacity")
 
 
 if __name__ == "__main__":

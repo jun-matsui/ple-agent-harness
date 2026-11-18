@@ -1,0 +1,9 @@
+{
+  "score": 62.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_cooling_tower_performance",
+    "rationale": "Evaluates ASHRAE/CTI open-circuit cooling tower thermal heat rejection, range, approach against the outdoor wet-bulb thermodynamic limit, and full steady-state water balance (evaporation, drift, blowdown, and makeup water rates).",
+    "model": "gemini-3.8-flash"
+  }
+}

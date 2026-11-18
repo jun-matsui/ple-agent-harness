@@ -4458,3 +4458,96 @@ def verify_nfpa92_stairwell_pressurization(
         "door_force_ok": door_force_ok,
         "pressure_ok": pressure_ok,
     }
+
+
+def verify_cooling_tower_performance(
+    cooling_water_flow_gpm: float,
+    t_hot_water_in_f: float,
+    t_cold_water_out_f: float,
+    wet_bulb_temp_f: float,
+    tower_capacity_tons: float,
+    cycles_of_concentration: float = 4.0,
+    min_approach_f: float = 5.0,
+    drift_rate_pct: float = 0.005,
+    max_drift_rate_pct: float = 0.010,
+    max_makeup_gpm: float = 0.0,
+) -> Dict[str, Any]:
+    """ASHRAE Fundamentals & CTI cooling tower thermal heat rejection, approach, and water balance gate."""
+    scalars = [
+        cooling_water_flow_gpm,
+        t_hot_water_in_f,
+        t_cold_water_out_f,
+        wet_bulb_temp_f,
+        tower_capacity_tons,
+        cycles_of_concentration,
+        min_approach_f,
+        drift_rate_pct,
+        max_drift_rate_pct,
+        max_makeup_gpm,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(cooling_water_flow_gpm, tower_capacity_tons, min_approach_f, max_drift_rate_pct)
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_flow_or_capacity"}
+    if drift_rate_pct < 0:
+        return {"pass": False, "reason": "negative_drift_rate"}
+    if max_makeup_gpm < 0:
+        return {"pass": False, "reason": "negative_makeup_capacity"}
+    if cycles_of_concentration <= 1.0:
+        return {"pass": False, "reason": "invalid_cycles_of_concentration"}
+    if t_hot_water_in_f <= t_cold_water_out_f:
+        return {"pass": False, "reason": "hot_water_not_cooled"}
+    if t_cold_water_out_f <= wet_bulb_temp_f:
+        return {"pass": False, "reason": "cold_water_below_wet_bulb"}
+
+    # Thermal range and approach to ambient wet-bulb
+    range_f = t_hot_water_in_f - t_cold_water_out_f
+    approach_f = t_cold_water_out_f - wet_bulb_temp_f
+    approach_ok = approach_f >= min_approach_f
+
+    # ASHRAE standard water heat rejection (500 = 8.33 lb/gal * 60 min/hr * 1.0 Btu/lb-F)
+    q_rejected_btuh = 500.0 * cooling_water_flow_gpm * range_f
+    # 1 Cooling tower ton = 15,000 Btu/hr (12,000 evaporator + 3,000 heat of compression)
+    tons_required = q_rejected_btuh / 15000.0
+    thermal_dcr = tons_required / tower_capacity_tons
+    thermal_ok = thermal_dcr <= 1.0
+
+    # ASHRAE/CTI water consumption equations
+    # Evaporation rate: ~0.0008 gpm per gpm circulated per deg F range
+    evaporation_gpm = 0.0008 * cooling_water_flow_gpm * range_f
+    drift_gpm = cooling_water_flow_gpm * (drift_rate_pct / 100.0)
+    drift_ok = drift_rate_pct <= max_drift_rate_pct
+
+    # Dissolved solids mass balance for blowdown: B = E / (COC - 1) - D
+    raw_blowdown = (evaporation_gpm / (cycles_of_concentration - 1.0)) - drift_gpm
+    blowdown_gpm = max(raw_blowdown, 0.0)
+    makeup_gpm = evaporation_gpm + drift_gpm + blowdown_gpm
+
+    makeup_ok = True
+    makeup_dcr = None
+    if max_makeup_gpm > 0.0:
+        makeup_dcr = makeup_gpm / max_makeup_gpm
+        makeup_ok = makeup_dcr <= 1.0
+
+    gov_dcr = max(thermal_dcr, makeup_dcr) if makeup_dcr is not None else thermal_dcr
+    passed = thermal_ok and approach_ok and drift_ok and makeup_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "q_rejected_btuh": round(q_rejected_btuh, 2),
+        "tons_required": round(tons_required, 2),
+        "range_f": round(range_f, 2),
+        "approach_f": round(approach_f, 2),
+        "evaporation_gpm": round(evaporation_gpm, 3),
+        "drift_gpm": round(drift_gpm, 4),
+        "blowdown_gpm": round(blowdown_gpm, 3),
+        "makeup_gpm": round(makeup_gpm, 3),
+        "approach_ok": approach_ok,
+        "thermal_ok": thermal_ok,
+        "drift_ok": drift_ok,
+        "makeup_ok": makeup_ok,
+    }
