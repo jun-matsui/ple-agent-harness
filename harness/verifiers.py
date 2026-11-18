@@ -3789,3 +3789,118 @@ def verify_heat_exchanger_lmtd(
         "f_factor": round(f_factor, 4),
         "flow_type": ft,
     }
+
+
+def verify_asme_bpvc_vessel_thickness(
+    design_pressure_psi: float,
+    inside_diameter_in: float,
+    nominal_thickness_in: float,
+    allowable_stress_psi: float = 20000.0,
+    joint_efficiency_e: float = 1.0,
+    corrosion_allowance_in: float = 0.0625,
+    component_type: str = "cylindrical_shell",
+    crown_radius_in: float = 0.0,
+    knuckle_radius_in: float = 0.0,
+) -> Dict[str, Any]:
+    """ASME BPVC Section VIII Division 1 UG-27 & UG-32 shell and head thickness & MAWP gate."""
+    scalars = [
+        design_pressure_psi,
+        inside_diameter_in,
+        nominal_thickness_in,
+        allowable_stress_psi,
+        joint_efficiency_e,
+        corrosion_allowance_in,
+        crown_radius_in,
+        knuckle_radius_in,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            design_pressure_psi,
+            inside_diameter_in,
+            nominal_thickness_in,
+            allowable_stress_psi,
+            joint_efficiency_e,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_pressure_or_geometry"}
+    if corrosion_allowance_in < 0 or crown_radius_in < 0 or knuckle_radius_in < 0:
+        return {"pass": False, "reason": "negative_allowance_or_radius"}
+    if not (0.0 < joint_efficiency_e <= 1.0):
+        return {"pass": False, "reason": "invalid_joint_efficiency"}
+
+    c_type = component_type.strip().lower().replace("-", "_")
+    valid_types = {"cylindrical_shell", "2_to_1_ellipsoidal", "ellipsoidal", "hemispherical", "torispherical"}
+    if c_type not in valid_types:
+        return {"pass": False, "reason": "invalid_component_type"}
+
+    # ASME Section VIII-1 thin-shell limit (t <= 0.5 * R or P <= 0.385 * S * E)
+    radius_in = inside_diameter_in / 2.0
+    if nominal_thickness_in >= radius_in:
+        return {"pass": False, "reason": "thickness_exceeds_inside_radius"}
+    if design_pressure_psi >= (allowable_stress_psi * joint_efficiency_e):
+        return {"pass": False, "reason": "pressure_exceeds_allowable_stress"}
+
+    t_eff_in = nominal_thickness_in - corrosion_allowance_in
+    if t_eff_in <= 0:
+        return {
+            "pass": False,
+            "reason": "corrosion_allowance_exceeds_nominal_thickness",
+            "nominal_thickness_in": round(nominal_thickness_in, 4),
+            "corrosion_allowance_in": round(corrosion_allowance_in, 4),
+        }
+
+    se = allowable_stress_psi * joint_efficiency_e
+    p = design_pressure_psi
+    r = radius_in
+    d = inside_diameter_in
+
+    if c_type == "cylindrical_shell":
+        # UG-27(c)(1) circumferential stress (longitudinal joint)
+        denom = se - 0.60 * p
+        if denom <= 0:
+            return {"pass": False, "reason": "invalid_stress_pressure_state"}
+        t_press_in = (p * r) / denom
+        mawp_psi = (se * t_eff_in) / (r + 0.60 * t_eff_in)
+    elif c_type in ("2_to_1_ellipsoidal", "ellipsoidal"):
+        # UG-32(d) 2:1 ellipsoidal head
+        denom = 2.0 * se - 0.20 * p
+        if denom <= 0:
+            return {"pass": False, "reason": "invalid_stress_pressure_state"}
+        t_press_in = (p * d) / denom
+        mawp_psi = (2.0 * se * t_eff_in) / (d + 0.20 * t_eff_in)
+    elif c_type == "hemispherical":
+        # UG-32(f) hemispherical head
+        denom = 2.0 * se - 0.20 * p
+        if denom <= 0:
+            return {"pass": False, "reason": "invalid_stress_pressure_state"}
+        t_press_in = (p * r) / denom
+        mawp_psi = (2.0 * se * t_eff_in) / (r + 0.20 * t_eff_in)
+    else:  # torispherical
+        # UG-32(e) ASME flanged and dished head
+        l_crown = crown_radius_in if crown_radius_in > 0.0 else inside_diameter_in
+        r_knuckle = knuckle_radius_in if knuckle_radius_in > 0.0 else (0.06 * inside_diameter_in)
+        if r_knuckle <= 0:
+            return {"pass": False, "reason": "invalid_knuckle_radius"}
+        m_factor = 0.25 * (3.0 + math.sqrt(l_crown / r_knuckle))
+        denom = 2.0 * se - 0.20 * p
+        if denom <= 0:
+            return {"pass": False, "reason": "invalid_stress_pressure_state"}
+        t_press_in = (p * l_crown * m_factor) / denom
+        mawp_psi = (2.0 * se * t_eff_in) / (m_factor * l_crown + 0.20 * t_eff_in)
+
+    t_req_in = t_press_in + corrosion_allowance_in
+    dcr = t_req_in / nominal_thickness_in
+    passed = (dcr <= 1.0) and (design_pressure_psi <= mawp_psi)
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "t_required_in": round(t_req_in, 4),
+        "t_pressure_in": round(t_press_in, 4),
+        "t_effective_in": round(t_eff_in, 4),
+        "mawp_psi": round(mawp_psi, 2),
+        "component_type": c_type,
+    }

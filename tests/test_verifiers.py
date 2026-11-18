@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asme_bpvc_vessel_thickness,
     verify_heat_exchanger_lmtd,
     verify_open_channel_hydraulic_jump,
     verify_nrcs_tr55_runoff,
@@ -3738,6 +3739,104 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_duty_or_geometry")
+
+
+    def test_asme_bpvc_vessel_thickness(self) -> None:
+        from harness.verifiers import verify_asme_bpvc_vessel_thickness
+
+        # Standard cylindrical pressure vessel shell passing check
+        res_pass = verify_asme_bpvc_vessel_thickness(
+            design_pressure_psi=250.0,
+            inside_diameter_in=48.0,
+            nominal_thickness_in=0.50,
+            allowable_stress_psi=20000.0,
+            joint_efficiency_e=1.0,
+            corrosion_allowance_in=0.0625,
+            component_type="cylindrical_shell",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["component_type"], "cylindrical_shell")
+        self.assertAlmostEqual(res_pass["t_pressure_in"], 0.3023, places=3)
+        self.assertAlmostEqual(res_pass["t_required_in"], 0.3648, places=3)
+        self.assertAlmostEqual(res_pass["mawp_psi"], 360.64, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # 2:1 Ellipsoidal head check
+        res_ellip = verify_asme_bpvc_vessel_thickness(
+            design_pressure_psi=250.0,
+            inside_diameter_in=48.0,
+            nominal_thickness_in=0.50,
+            allowable_stress_psi=20000.0,
+            joint_efficiency_e=1.0,
+            corrosion_allowance_in=0.0625,
+            component_type="2_to_1_ellipsoidal",
+        )
+        self.assertTrue(res_ellip["pass"])
+        self.assertAlmostEqual(res_ellip["t_pressure_in"], 0.3004, places=3)
+        self.assertAlmostEqual(res_ellip["mawp_psi"], 363.92, places=1)
+
+        # Hemispherical head check (half the thickness of cylindrical shell)
+        res_hemi = verify_asme_bpvc_vessel_thickness(
+            design_pressure_psi=250.0,
+            inside_diameter_in=48.0,
+            nominal_thickness_in=0.375,
+            allowable_stress_psi=20000.0,
+            joint_efficiency_e=1.0,
+            corrosion_allowance_in=0.0625,
+            component_type="hemispherical",
+        )
+        self.assertTrue(res_hemi["pass"])
+        self.assertAlmostEqual(res_hemi["t_pressure_in"], 0.1502, places=3)
+        self.assertGreater(res_hemi["mawp_psi"], 500.0)
+
+        # Torispherical head failing due to higher knuckle stress
+        res_tori_fail = verify_asme_bpvc_vessel_thickness(
+            design_pressure_psi=250.0,
+            inside_diameter_in=48.0,
+            nominal_thickness_in=0.50,
+            allowable_stress_psi=20000.0,
+            joint_efficiency_e=1.0,
+            corrosion_allowance_in=0.0625,
+            component_type="torispherical",
+        )
+        self.assertFalse(res_tori_fail["pass"])
+        self.assertGreater(res_tori_fail["dcr"], 1.0)
+
+        # Corrosion allowance consuming entire wall thickness
+        res_corr_err = verify_asme_bpvc_vessel_thickness(
+            design_pressure_psi=100.0,
+            inside_diameter_in=24.0,
+            nominal_thickness_in=0.25,
+            corrosion_allowance_in=0.30,
+        )
+        self.assertFalse(res_corr_err["pass"])
+        self.assertEqual(res_corr_err["reason"], "corrosion_allowance_exceeds_nominal_thickness")
+
+        # Input error validation
+        res_nan = verify_asme_bpvc_vessel_thickness(
+            design_pressure_psi=float("nan"),
+            inside_diameter_in=48.0,
+            nominal_thickness_in=0.50,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_asme_bpvc_vessel_thickness(
+            design_pressure_psi=-200.0,
+            inside_diameter_in=48.0,
+            nominal_thickness_in=0.50,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_pressure_or_geometry")
+
+        res_inv_type = verify_asme_bpvc_vessel_thickness(
+            design_pressure_psi=200.0,
+            inside_diameter_in=48.0,
+            nominal_thickness_in=0.50,
+            component_type="conical_flange",
+        )
+        self.assertFalse(res_inv_type["pass"])
+        self.assertEqual(res_inv_type["reason"], "invalid_component_type")
 
 
 if __name__ == "__main__":

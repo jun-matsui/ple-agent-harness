@@ -1,0 +1,9 @@
+{
+  "score": 56.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asme_bpvc_vessel_thickness",
+    "rationale": "Implements ASME Boiler and Pressure Vessel Code (BPVC) Section VIII Division 1 UG-27 and UG-32 minimum wall thickness and Maximum Allowable Working Pressure (MAWP) verification for cylindrical shells and formed heads (2:1 ellipsoidal, hemispherical, and torispherical). This addresses a critical gap in mechanical and process safety engineering on the physical engineering exam.",
+    "model": "gemini-3.8-flash"
+  }
+}
