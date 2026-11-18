@@ -1,0 +1,9 @@
+{
+  "score": 43.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_web_local_yielding_and_crippling",
+    "rationale": "Implements AISC 360-16 Section J10.2 and J10.3 LRFD checks for beam web local yielding and web local crippling under concentrated loads or end bearing reactions to deterministically govern whether transverse bearing stiffeners are mandated.",
+    "model": "gemini-3.8-flash"
+  }
+}

@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_web_local_yielding_and_crippling,
     verify_aisc_unbraced_beam_flexure,
     verify_aashto_stopping_sight_distance,
     verify_nec_grounding_electrode_conductor,
@@ -2518,6 +2519,108 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_nan["pass"])
         self.assertEqual(res_nan["reason"], "nan_input")
+
+
+    def test_aisc_web_local_yielding_and_crippling(self) -> None:
+        from harness.verifiers import verify_aisc_web_local_yielding_and_crippling
+
+        # End bearing support reaction passing without stiffeners (W18x50 parameters)
+        res_end_pass = verify_aisc_web_local_yielding_and_crippling(
+            pu_kips=60.0,
+            d_in=18.0,
+            tw_in=0.355,
+            tf_in=0.570,
+            k_des_in=0.98,
+            lb_bearing_in=4.0,
+            distance_to_end_in=0.0,
+            fy_ksi=50.0,
+        )
+        self.assertTrue(res_end_pass["pass"])
+        self.assertFalse(res_end_pass["stiffeners_required"])
+        self.assertEqual(res_end_pass["governing_limit_state"], "web_local_crippling")
+        self.assertAlmostEqual(res_end_pass["phi_rn_yielding_kips"], 114.49, places=1)
+        self.assertAlmostEqual(res_end_pass["phi_rn_crippling_kips"], 77.23, places=1)
+        self.assertAlmostEqual(res_end_pass["dcr"], 60.0 / 77.23, places=3)
+
+        # Interior concentrated load passing (distance > d)
+        res_interior_pass = verify_aisc_web_local_yielding_and_crippling(
+            pu_kips=120.0,
+            d_in=18.0,
+            tw_in=0.355,
+            tf_in=0.570,
+            k_des_in=0.98,
+            lb_bearing_in=4.0,
+            distance_to_end_in=60.0,
+            fy_ksi=50.0,
+        )
+        self.assertTrue(res_interior_pass["pass"])
+        self.assertEqual(res_interior_pass["governing_limit_state"], "web_local_crippling")
+        self.assertAlmostEqual(res_interior_pass["phi_rn_yielding_kips"], 157.98, places=1)
+        self.assertAlmostEqual(res_interior_pass["phi_rn_crippling_kips"], 153.19, places=1)
+
+        # End reaction overload requiring stiffeners (dcr > 1.0)
+        res_end_fail = verify_aisc_web_local_yielding_and_crippling(
+            pu_kips=95.0,
+            d_in=18.0,
+            tw_in=0.355,
+            tf_in=0.570,
+            k_des_in=0.98,
+            lb_bearing_in=4.0,
+            distance_to_end_in=0.0,
+        )
+        self.assertFalse(res_end_fail["pass"])
+        self.assertTrue(res_end_fail["stiffeners_required"])
+        self.assertGreater(res_end_fail["dcr"], 1.0)
+
+        # Short bearing length at end (lb / d <= 0.20)
+        res_short_bearing = verify_aisc_web_local_yielding_and_crippling(
+            pu_kips=50.0,
+            d_in=18.0,
+            tw_in=0.355,
+            tf_in=0.570,
+            k_des_in=0.98,
+            lb_bearing_in=3.0,
+            distance_to_end_in=0.0,
+        )
+        self.assertTrue(res_short_bearing["pass"])
+        self.assertAlmostEqual(res_short_bearing["phi_rn_crippling_kips"], 71.87, places=1)
+
+        # Input error validation checks
+        res_nan = verify_aisc_web_local_yielding_and_crippling(
+            pu_kips=float("nan"),
+            d_in=18.0,
+            tw_in=0.355,
+            tf_in=0.570,
+            k_des_in=0.98,
+            lb_bearing_in=4.0,
+            distance_to_end_in=0.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg_load = verify_aisc_web_local_yielding_and_crippling(
+            pu_kips=-50.0,
+            d_in=18.0,
+            tw_in=0.355,
+            tf_in=0.570,
+            k_des_in=0.98,
+            lb_bearing_in=4.0,
+            distance_to_end_in=0.0,
+        )
+        self.assertFalse(res_neg_load["pass"])
+        self.assertEqual(res_neg_load["reason"], "negative_load_input")
+
+        res_k_err = verify_aisc_web_local_yielding_and_crippling(
+            pu_kips=50.0,
+            d_in=18.0,
+            tw_in=0.355,
+            tf_in=0.570,
+            k_des_in=20.0,
+            lb_bearing_in=4.0,
+            distance_to_end_in=0.0,
+        )
+        self.assertFalse(res_k_err["pass"])
+        self.assertEqual(res_k_err["reason"], "flange_or_k_exceeds_depth")
 
 
 if __name__ == "__main__":

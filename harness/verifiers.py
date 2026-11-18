@@ -2624,3 +2624,79 @@ def verify_aisc_unbraced_beam_flexure(
         "lr_ft": round(lr_in / 12.0, 2),
         "governing_limit_state": limit_state,
     }
+
+
+def verify_aisc_web_local_yielding_and_crippling(
+    pu_kips: float,
+    d_in: float,
+    tw_in: float,
+    tf_in: float,
+    k_des_in: float,
+    lb_bearing_in: float,
+    distance_to_end_in: float,
+    fy_ksi: float = 50.0,
+    e_ksi: float = 29000.0,
+) -> Dict[str, Any]:
+    """AISC 360-16 Section J10.2 & J10.3 LRFD beam web local yielding and crippling check."""
+    inputs = [
+        pu_kips,
+        d_in,
+        tw_in,
+        tf_in,
+        k_des_in,
+        lb_bearing_in,
+        distance_to_end_in,
+        fy_ksi,
+        e_ksi,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if pu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if min(d_in, tw_in, tf_in, k_des_in, lb_bearing_in, fy_ksi, e_ksi) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if distance_to_end_in < 0:
+        return {"pass": False, "reason": "negative_distance_to_end"}
+    if k_des_in > d_in or tf_in > d_in:
+        return {"pass": False, "reason": "flange_or_k_exceeds_depth"}
+
+    # AISC 360-16 Section J10.2 Web Local Yielding (phi = 1.00)
+    phi_yield = 1.00
+    if distance_to_end_in > d_in:
+        rn_yield = fy_ksi * tw_in * (5.0 * k_des_in + lb_bearing_in)
+    else:
+        rn_yield = fy_ksi * tw_in * (2.5 * k_des_in + lb_bearing_in)
+    phi_rn_yield = phi_yield * rn_yield
+
+    # AISC 360-16 Section J10.3 Web Local Crippling (phi = 0.75)
+    phi_crip = 0.75
+    crippling_const = math.sqrt((e_ksi * fy_ksi * tf_in) / tw_in)
+    lb_over_d = lb_bearing_in / d_in
+    tw_over_tf_term = (tw_in / tf_in) ** 1.5
+
+    if distance_to_end_in >= (d_in / 2.0):
+        # Concentrated load applied at distance >= d / 2 from member end (Eq. J10-4)
+        rn_crip = 0.80 * (tw_in**2) * (1.0 + 3.0 * lb_over_d * tw_over_tf_term) * crippling_const
+    else:
+        # Concentrated load applied at distance < d / 2 from member end (Eq. J10-5a & J10-5b)
+        if lb_over_d <= 0.20:
+            rn_crip = 0.40 * (tw_in**2) * (1.0 + 3.0 * lb_over_d * tw_over_tf_term) * crippling_const
+        else:
+            rn_crip = 0.40 * (tw_in**2) * (1.0 + (4.0 * lb_over_d - 0.20) * tw_over_tf_term) * crippling_const
+
+    phi_rn_crip = phi_crip * rn_crip
+
+    phi_rn_gov = min(phi_rn_yield, phi_rn_crip)
+    limit_state = "web_local_yielding" if phi_rn_yield <= phi_rn_crip else "web_local_crippling"
+    dcr = pu_kips / phi_rn_gov if phi_rn_gov > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_rn_kips": round(phi_rn_gov, 2),
+        "phi_rn_yielding_kips": round(phi_rn_yield, 2),
+        "phi_rn_crippling_kips": round(phi_rn_crip, 2),
+        "governing_limit_state": limit_state,
+        "stiffeners_required": not passed,
+    }
