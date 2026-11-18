@@ -1,0 +1,9 @@
+{
+  "score": 41.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aashto_stopping_sight_distance",
+    "rationale": "Fills a major Civil/Transportation geometric design gap on the PE exam by deterministically verifying AASHTO Green Book Stopping Sight Distance (SSD) on level and graded roadways, along with crest and sag vertical curve minimum length requirements (K-value criteria).",
+    "model": "gemini-3.8-flash"
+  }
+}

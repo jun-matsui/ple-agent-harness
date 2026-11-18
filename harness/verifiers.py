@@ -2443,3 +2443,98 @@ def verify_nec_grounding_electrode_conductor(
         "service_material": s_mat,
         "gec_material": g_mat,
     }
+
+
+def verify_aashto_stopping_sight_distance(
+    design_speed_mph: float,
+    provided_sight_distance_ft: float,
+    grade_pct: float = 0.0,
+    reaction_time_s: float = 2.5,
+    deceleration_rate_fps2: float = 11.2,
+    g1_pct: float = 0.0,
+    g2_pct: float = 0.0,
+    curve_length_ft: float = 0.0,
+    curve_type: str = "crest",
+) -> Dict[str, Any]:
+    """AASHTO Green Book stopping sight distance (SSD) and crest/sag vertical curve length check."""
+    scalars = [
+        design_speed_mph,
+        provided_sight_distance_ft,
+        grade_pct,
+        reaction_time_s,
+        deceleration_rate_fps2,
+        g1_pct,
+        g2_pct,
+        curve_length_ft,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if min(design_speed_mph, provided_sight_distance_ft, reaction_time_s, deceleration_rate_fps2) <= 0:
+        return {"pass": False, "reason": "non_positive_speed_or_geometry"}
+    if curve_length_ft < 0:
+        return {"pass": False, "reason": "negative_curve_length"}
+
+    c_type = curve_type.strip().lower()
+    if c_type not in ("crest", "sag"):
+        return {"pass": False, "reason": "invalid_curve_type"}
+
+    g_standard = 32.174
+    f_ratio = deceleration_rate_fps2 / g_standard
+    denom = f_ratio + (grade_pct / 100.0)
+    if denom <= 0.0:
+        return {"pass": False, "reason": "excessive_downgrade_cannot_stop"}
+
+    # AASHTO Eq. 3-1: Brake reaction distance (1.467 * V * t)
+    d_reaction_ft = 1.467 * design_speed_mph * reaction_time_s
+    # AASHTO Eq. 3-2: Braking distance on grade (V^2 / (30 * (a/g +/- G)))
+    d_braking_ft = (design_speed_mph**2) / (30.0 * denom)
+    ssd_required_ft = d_reaction_ft + d_braking_ft
+
+    ssd_dcr = ssd_required_ft / provided_sight_distance_ft
+    ssd_ok = ssd_dcr <= 1.0
+
+    # Vertical curve check if grades and curve length are supplied
+    curve_ok = True
+    curve_dcr = None
+    l_min_ft = None
+    k_value = None
+    a_diff = abs(g1_pct - g2_pct)
+
+    if a_diff > 0.0 and curve_length_ft > 0.0:
+        s = ssd_required_ft
+        if c_type == "crest":
+            # AASHTO standard driver eye height h1=3.5 ft, object height h2=2.0 ft -> C = 2158
+            c_coeff = 2158.0
+            l_calc_s_le_l = (a_diff * (s**2)) / c_coeff
+            if s <= l_calc_s_le_l:
+                l_min_ft = l_calc_s_le_l
+            else:
+                l_min_ft = 2.0 * s - (c_coeff / a_diff)
+        else:  # sag curve
+            # Headlight beam criteria: h=2.0 ft, 1-deg upward divergence -> C = 400 + 3.5*S
+            c_sag = 400.0 + 3.5 * s
+            l_calc_sag = (a_diff * (s**2)) / c_sag
+            if s <= l_calc_sag:
+                l_min_ft = l_calc_sag
+            else:
+                l_min_ft = 2.0 * s - (c_sag / a_diff)
+
+        l_min_ft = max(l_min_ft, 0.0)
+        k_value = curve_length_ft / a_diff if a_diff > 0 else float("inf")
+        curve_dcr = l_min_ft / curve_length_ft if curve_length_ft > 0 else float("inf")
+        curve_ok = curve_dcr <= 1.0
+
+    gov_dcr = max(ssd_dcr, curve_dcr) if curve_dcr is not None else ssd_dcr
+    passed = ssd_ok and curve_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "ssd_required_ft": round(ssd_required_ft, 2),
+        "d_reaction_ft": round(d_reaction_ft, 2),
+        "d_braking_ft": round(d_braking_ft, 2),
+        "ssd_dcr": round(ssd_dcr, 4),
+        "l_min_ft": round(l_min_ft, 2) if l_min_ft is not None else None,
+        "curve_dcr": round(curve_dcr, 4) if curve_dcr is not None else None,
+        "k_value": round(k_value, 2) if k_value is not None else None,
+    }

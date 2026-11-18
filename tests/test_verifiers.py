@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aashto_stopping_sight_distance,
     verify_nec_grounding_electrode_conductor,
     verify_asce7_story_drift_and_pdelta,
     verify_darcy_weisbach_pipe_flow,
@@ -2344,6 +2345,83 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_conductor_area")
+
+
+    def test_aashto_stopping_sight_distance(self) -> None:
+        from harness.verifiers import verify_aashto_stopping_sight_distance
+
+        # Standard level roadway passing SSD and crest vertical curve check
+        res_pass = verify_aashto_stopping_sight_distance(
+            design_speed_mph=60.0,
+            provided_sight_distance_ft=600.0,
+            grade_pct=0.0,
+            g1_pct=3.0,
+            g2_pct=-2.0,
+            curve_length_ft=800.0,
+            curve_type="crest",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["d_reaction_ft"], 220.05, places=1)
+        self.assertAlmostEqual(res_pass["d_braking_ft"], 344.73, places=1)
+        self.assertAlmostEqual(res_pass["ssd_required_ft"], 564.78, places=1)
+        self.assertAlmostEqual(res_pass["ssd_dcr"], 564.78 / 600.0, places=3)
+        self.assertLessEqual(res_pass["l_min_ft"], 800.0)
+        self.assertAlmostEqual(res_pass["k_value"], 160.0, places=1)
+
+        # Downgrade condition increasing braking distance and failing SSD
+        res_fail_ssd = verify_aashto_stopping_sight_distance(
+            design_speed_mph=60.0,
+            provided_sight_distance_ft=550.0,
+            grade_pct=-4.0,
+        )
+        self.assertFalse(res_fail_ssd["pass"])
+        self.assertGreater(res_fail_ssd["ssd_dcr"], 1.0)
+        self.assertGreater(res_fail_ssd["ssd_required_ft"], 600.0)
+
+        # Sag vertical curve passing check
+        res_sag = verify_aashto_stopping_sight_distance(
+            design_speed_mph=50.0,
+            provided_sight_distance_ft=450.0,
+            grade_pct=0.0,
+            g1_pct=-3.0,
+            g2_pct=2.0,
+            curve_length_ft=500.0,
+            curve_type="sag",
+        )
+        self.assertTrue(res_sag["pass"])
+        self.assertLess(res_sag["curve_dcr"], 1.0)
+
+        # Excessive steep downgrade causing physical inability to stop
+        res_steep = verify_aashto_stopping_sight_distance(
+            design_speed_mph=45.0,
+            provided_sight_distance_ft=500.0,
+            grade_pct=-36.0,
+        )
+        self.assertFalse(res_steep["pass"])
+        self.assertEqual(res_steep["reason"], "excessive_downgrade_cannot_stop")
+
+        # Input error validation
+        res_nan = verify_aashto_stopping_sight_distance(
+            design_speed_mph=float("nan"),
+            provided_sight_distance_ft=500.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aashto_stopping_sight_distance(
+            design_speed_mph=-50.0,
+            provided_sight_distance_ft=500.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_speed_or_geometry")
+
+        res_inv_type = verify_aashto_stopping_sight_distance(
+            design_speed_mph=50.0,
+            provided_sight_distance_ft=500.0,
+            curve_type="spiral",
+        )
+        self.assertFalse(res_inv_type["pass"])
+        self.assertEqual(res_inv_type["reason"], "invalid_curve_type")
 
 
 if __name__ == "__main__":
