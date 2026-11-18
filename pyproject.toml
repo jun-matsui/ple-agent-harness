@@ -1,0 +1,11 @@
+[project]
+name = "ple-grandmaster-harness"
+version = "0.1.0"
+description = "Code-gated, revision-authority-aware autonomous agent harness for Physical-Engineering's Last Exam (PLE)"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

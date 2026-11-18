@@ -1,0 +1,9 @@
+{
+  "score": 13.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_retaining_wall_stability",
+    "rationale": "Implements standard Rankine lateral earth pressure and limit equilibrium checks for cantilever retaining walls (overturning factor of safety, sliding resistance, and base resultant kern/eccentricity). This fills a critical Civil/Geotechnical/Structural PLE gap frequently assessed in PE design problems.",
+    "model": "gemini-3.8-flash"
+  }
+}

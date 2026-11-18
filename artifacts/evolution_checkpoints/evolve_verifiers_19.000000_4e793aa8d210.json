@@ -1,0 +1,9 @@
+{
+  "score": 19.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asce7_seismic_base_shear",
+    "rationale": "Implements ASCE 7-16 / 7-22 Section 12.8 Equivalent Lateral Force (ELF) procedure for structural seismic base shear demand and capacity verification, addressing a critical code-gate gap in civil/structural licensing evaluations.",
+    "model": "gemini-3.8-flash"
+  }
+}

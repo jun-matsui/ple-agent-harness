@@ -1,0 +1,27 @@
+# Credentials & secrets
+.env
+.env.*
+kaggle.json
+*.key
+*.pem
+
+# Heavy data, repos & binaries
+data/raw/
+data/processed/
+data/ple_repo/
+data/reference_kernels/
+*.zip
+*.tar.gz
+*.pth
+*.bin
+*.pt
+*.onnx
+
+# Python & IDE
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.DS_Store
+logs/
+*.pyc

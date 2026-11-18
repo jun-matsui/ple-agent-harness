@@ -1,0 +1,9 @@
+{
+  "score": 14.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_beam_shear",
+    "rationale": "ACI 318-19 one-way shear strength and transverse reinforcement verification for reinforced concrete beams, checking nominal capacity (Vc + Vs), minimum shear reinforcement area, maximum stirrup spacing, and section shear limits.",
+    "model": "gemini-3.8-flash"
+  }
+}

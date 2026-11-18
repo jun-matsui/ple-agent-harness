@@ -1,0 +1,9 @@
+{
+  "score": 20.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ashrae_ventilation_rate",
+    "rationale": "Addresses a critical mechanical PLE gap by implementing the ASHRAE 62.1 Ventilation Rate Procedure (VRP) to verify breathing-zone outdoor airflow, air distribution effectiveness, and primary outdoor air fraction.",
+    "model": "gemini-3.8-flash"
+  }
+}

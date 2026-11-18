@@ -1,0 +1,9 @@
+{
+  "score": 12.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_beam_flexure",
+    "rationale": "Evaluates rectangular singly reinforced concrete beam flexural design against ACI 318-19 LRFD provisions (Whitney stress block, concrete strain limit ductility classification, and minimum reinforcement requirements). This fills a critical structural code-gate gap frequently tested in civil/structural PLE evaluations.",
+    "model": "gemini-3.8-flash"
+  }
+}

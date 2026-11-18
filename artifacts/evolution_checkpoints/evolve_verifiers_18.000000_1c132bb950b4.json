@@ -1,0 +1,9 @@
+{
+  "score": 18.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_hydronic_pipe_sizing",
+    "rationale": "Fills the crucial Mechanical/HVAC hydronic distribution gap in PLE by evaluating closed-loop water pipe velocity limits, Hazen-Williams friction head loss per 100 ft, and total pressure drop against ASHRAE 90.1 and Fundamentals design standards.",
+    "model": "gemini-3.8-flash"
+  }
+}

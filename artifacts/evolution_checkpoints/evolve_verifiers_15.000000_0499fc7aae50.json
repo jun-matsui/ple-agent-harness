@@ -1,0 +1,9 @@
+{
+  "score": 15.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_manning_pipe_flow",
+    "rationale": "Implements Civil/Environmental storm and sanitary gravity sewer verification using Manning's equation, enforcing peak flow capacity limits and self-cleansing velocity criteria (2.0 to 10.0 fps) commonly tested on the Physical Engineering Last Exam.",
+    "model": "gemini-3.8-flash"
+  }
+}

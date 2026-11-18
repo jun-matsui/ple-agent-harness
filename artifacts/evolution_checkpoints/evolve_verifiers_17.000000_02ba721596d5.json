@@ -1,0 +1,9 @@
+{
+  "score": 17.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_transformer_fault_current",
+    "rationale": "Evaluates available secondary short-circuit current (SCA) against equipment Available Interrupting Capacity (AIC) per NEC 110.9/110.10 and IEEE 141 Red Book per-unit standards, accounting for utility source impedance and rotational motor contributions.",
+    "model": "gemini-3.8-flash"
+  }
+}

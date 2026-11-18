@@ -1,0 +1,9 @@
+{
+  "score": 10.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_column_compression",
+    "rationale": "Implements AISC 360-16 Chapter E LRFD flexural buckling verification for structural steel columns, addressing the critical PLE demand-capacity evaluation gap between inelastic and elastic column stability.",
+    "model": "gemini-3.8-flash"
+  }
+}

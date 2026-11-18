@@ -1,0 +1,9 @@
+{
+  "score": 16.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_conductor_ampacity",
+    "rationale": "Evaluates NEC 310.15 conductor ampacity with temperature correction factor and conduit bundling adjustment against 125% continuous load requirements. Conductor ampacity sizing is a universal code gate tested on electrical and multi-disciplinary engineering exams alongside voltage drop.",
+    "model": "gemini-3.8-flash"
+  }
+}

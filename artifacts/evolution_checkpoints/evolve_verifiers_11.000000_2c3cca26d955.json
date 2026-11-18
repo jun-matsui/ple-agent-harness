@@ -1,0 +1,9 @@
+{
+  "score": 11.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ashrae_duct_sizing",
+    "rationale": "Adds an ASHRAE Fundamentals-compliant HVAC duct sizing verifier evaluating airflow velocity, Huebscher equivalent circular diameter friction loss rate, and rectangular aspect ratio. Bridges the missing Mechanical engineering discipline on PLE benchmarks with deterministic validation against NaN, zero, and negative inputs.",
+    "model": "gemini-3.8-flash"
+  }
+}

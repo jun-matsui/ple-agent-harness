@@ -1,0 +1,26 @@
+competition:
+  slug: physical-engineerings-last-exam
+  name: "Google - Agent Harness on Physical-Engineering's Last Exam (PLE)"
+  minimize: false
+  daily_limit: 5
+
+model:
+  model_api: google-cloud/gemini-4-argon
+  fallback_model_api: google-cloud/gemini-3.8-flash
+  temperature: 0.2
+  max_turns: 45
+  exec_timeout_sec: 300
+
+harness:
+  enable_revision_authority_scan: true
+  enable_deterministic_verifiers: true
+  max_repair_iterations: 4
+  ping_interval: null
+
+oci_vm:
+  host_alias: oci-vm
+  remote_dir: /home/opc/ple-agent-harness
+  service_name: ple-autonomous.service
+  memory_high: 120M
+  memory_max: 180M
+  cooldown_sec: 120
