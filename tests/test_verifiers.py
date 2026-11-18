@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_unbraced_beam_flexure,
     verify_aashto_stopping_sight_distance,
     verify_nec_grounding_electrode_conductor,
     verify_asce7_story_drift_and_pdelta,
@@ -2422,6 +2423,101 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_type["pass"])
         self.assertEqual(res_inv_type["reason"], "invalid_curve_type")
+
+
+    def test_aisc_unbraced_beam_flexure(self) -> None:
+        from harness.verifiers import verify_aisc_unbraced_beam_flexure
+
+        # Passing case with short unbraced length governed by plastic yielding (Lb <= Lp)
+        res_yield = verify_aisc_unbraced_beam_flexure(
+            mu_kip_ft=350.0,
+            unbraced_length_ft=8.0,
+            zx_in3=115.0,
+            sx_in3=103.0,
+            ry_in=2.46,
+            rts_in=2.80,
+            ho_in=13.3,
+            j_in4=3.01,
+            fy_ksi=50.0,
+        )
+        self.assertTrue(res_yield["pass"])
+        self.assertEqual(res_yield["governing_limit_state"], "plastic_yielding")
+        self.assertAlmostEqual(res_yield["phi_mn_kip_ft"], 431.25, places=1)
+        self.assertLess(res_yield["dcr"], 1.0)
+
+        # Inelastic LTB check with intermediate unbraced length (Lp < Lb <= Lr)
+        res_inelastic = verify_aisc_unbraced_beam_flexure(
+            mu_kip_ft=320.0,
+            unbraced_length_ft=18.0,
+            zx_in3=115.0,
+            sx_in3=103.0,
+            ry_in=2.46,
+            rts_in=2.80,
+            ho_in=13.3,
+            j_in4=3.01,
+            cb=1.14,
+        )
+        self.assertTrue(res_inelastic["pass"])
+        self.assertEqual(res_inelastic["governing_limit_state"], "inelastic_ltb")
+        self.assertLess(res_inelastic["phi_mn_kip_ft"], res_yield["phi_mn_kip_ft"])
+
+        # Elastic LTB check with long unbraced length (Lb > Lr) causing failure
+        res_elastic_fail = verify_aisc_unbraced_beam_flexure(
+            mu_kip_ft=300.0,
+            unbraced_length_ft=35.0,
+            zx_in3=115.0,
+            sx_in3=103.0,
+            ry_in=2.46,
+            rts_in=2.80,
+            ho_in=13.3,
+            j_in4=3.01,
+            cb=1.0,
+        )
+        self.assertFalse(res_elastic_fail["pass"])
+        self.assertEqual(res_elastic_fail["governing_limit_state"], "elastic_ltb")
+        self.assertGreater(res_elastic_fail["dcr"], 1.0)
+
+        # Edge case: Section modulus inconsistency (Sx > Zx)
+        res_sx_err = verify_aisc_unbraced_beam_flexure(
+            mu_kip_ft=100.0,
+            unbraced_length_ft=10.0,
+            zx_in3=80.0,
+            sx_in3=100.0,
+            ry_in=2.0,
+            rts_in=2.5,
+            ho_in=12.0,
+            j_in4=2.0,
+        )
+        self.assertFalse(res_sx_err["pass"])
+        self.assertEqual(res_sx_err["reason"], "sx_exceeds_zx")
+
+        # Edge case: Negative moment load
+        res_neg = verify_aisc_unbraced_beam_flexure(
+            mu_kip_ft=-50.0,
+            unbraced_length_ft=10.0,
+            zx_in3=115.0,
+            sx_in3=103.0,
+            ry_in=2.46,
+            rts_in=2.80,
+            ho_in=13.3,
+            j_in4=3.01,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        # Edge case: NaN input handling
+        res_nan = verify_aisc_unbraced_beam_flexure(
+            mu_kip_ft=float("nan"),
+            unbraced_length_ft=10.0,
+            zx_in3=115.0,
+            sx_in3=103.0,
+            ry_in=2.46,
+            rts_in=2.80,
+            ho_in=13.3,
+            j_in4=3.01,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
 
 
 if __name__ == "__main__":

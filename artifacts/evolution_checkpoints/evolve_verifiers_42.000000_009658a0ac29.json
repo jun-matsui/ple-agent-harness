@@ -1,0 +1,9 @@
+{
+  "score": 42.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_unbraced_beam_flexure",
+    "rationale": "Evaluates AISC 360-16 Chapter F2 lateral-torsional buckling (LTB) limit states (plastic yielding, inelastic LTB, and elastic LTB) for I-shaped members under unbraced length conditions.",
+    "model": "gemini-3.8-flash"
+  }
+}

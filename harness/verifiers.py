@@ -2538,3 +2538,89 @@ def verify_aashto_stopping_sight_distance(
         "curve_dcr": round(curve_dcr, 4) if curve_dcr is not None else None,
         "k_value": round(k_value, 2) if k_value is not None else None,
     }
+
+
+def verify_aisc_unbraced_beam_flexure(
+    mu_kip_ft: float,
+    unbraced_length_ft: float,
+    zx_in3: float,
+    sx_in3: float,
+    ry_in: float,
+    rts_in: float,
+    ho_in: float,
+    j_in4: float,
+    cb: float = 1.0,
+    fy_ksi: float = 50.0,
+    e_ksi: float = 29000.0,
+    phi: float = 0.90,
+) -> Dict[str, Any]:
+    """AISC 360-16 Section F2 LRFD flexural capacity and lateral-torsional buckling (LTB) check."""
+    inputs = [
+        mu_kip_ft,
+        unbraced_length_ft,
+        zx_in3,
+        sx_in3,
+        ry_in,
+        rts_in,
+        ho_in,
+        j_in4,
+        cb,
+        fy_ksi,
+        e_ksi,
+        phi,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if mu_kip_ft < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(unbraced_length_ft, zx_in3, sx_in3, ry_in, rts_in, ho_in, j_in4, cb, fy_ksi, e_ksi, phi)
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if sx_in3 > zx_in3:
+        return {"pass": False, "reason": "sx_exceeds_zx"}
+
+    # AISC 360-16 Eq. F2-1 plastic moment capacity
+    mp_kip_in = fy_ksi * zx_in3
+    lb_in = unbraced_length_ft * 12.0
+
+    # AISC 360-16 Eq. F2-5 limiting unbraced length for plastic yielding Lp
+    lp_in = 1.76 * ry_in * math.sqrt(e_ksi / fy_ksi)
+
+    # AISC 360-16 Eq. F2-6 limiting unbraced length for inelastic LTB Lr
+    ratio_j = j_in4 / (sx_in3 * ho_in)
+    term_fltb = (0.70 * fy_ksi) / e_ksi
+    inside_sqrt = ratio_j + math.sqrt((ratio_j**2) + 6.76 * (term_fltb**2))
+    lr_in = 1.95 * rts_in * (e_ksi / (0.70 * fy_ksi)) * math.sqrt(inside_sqrt)
+
+    # Determine nominal flexural strength Mn per AISC Section F2
+    if lb_in <= lp_in:
+        mn_kip_in = mp_kip_in
+        limit_state = "plastic_yielding"
+    elif lb_in <= lr_in:
+        # AISC Eq. F2-2 inelastic LTB
+        mn_calc = cb * (mp_kip_in - (mp_kip_in - 0.70 * fy_ksi * sx_in3) * ((lb_in - lp_in) / (lr_in - lp_in)))
+        mn_kip_in = min(mn_calc, mp_kip_in)
+        limit_state = "inelastic_ltb"
+    else:
+        # AISC Eq. F2-3 & F2-4 elastic LTB
+        lb_rts = lb_in / rts_in
+        fcr_ksi = (cb * (math.pi**2) * e_ksi / (lb_rts**2)) * math.sqrt(1.0 + 0.078 * ratio_j * (lb_rts**2))
+        mn_calc = fcr_ksi * sx_in3
+        mn_kip_in = min(mn_calc, mp_kip_in)
+        limit_state = "elastic_ltb"
+
+    phi_mn_kip_ft = (phi * mn_kip_in) / 12.0
+    dcr = mu_kip_ft / phi_mn_kip_ft if phi_mn_kip_ft > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_mn_kip_ft": round(phi_mn_kip_ft, 2),
+        "mp_kip_ft": round((phi * mp_kip_in) / 12.0, 2),
+        "lp_ft": round(lp_in / 12.0, 2),
+        "lr_ft": round(lr_in / 12.0, 2),
+        "governing_limit_state": limit_state,
+    }
