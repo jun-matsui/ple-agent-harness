@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_beam_column_interaction,
     verify_asce7_roof_snow_load,
     verify_aci_rebar_development_length,
     verify_aisc_column_base_plate,
@@ -1896,6 +1897,101 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_slope["pass"])
         self.assertEqual(res_inv_slope["reason"], "invalid_roof_slope")
+
+
+    def test_aisc_beam_column_interaction(self) -> None:
+        from harness.verifiers import verify_aisc_beam_column_interaction
+
+        # Passing case governed by Eq. H1-1a (P_u / phi_Pn >= 0.2)
+        res_h1a = verify_aisc_beam_column_interaction(
+            pu_kips=150.0,
+            mux_kip_ft=80.0,
+            muy_kip_ft=15.0,
+            phi_pn_kips=500.0,
+            phi_mnx_kip_ft=250.0,
+            phi_mny_kip_ft=60.0,
+        )
+        self.assertTrue(res_h1a["pass"])
+        self.assertEqual(res_h1a["governing_equation"], "H1-1a")
+        self.assertAlmostEqual(res_h1a["axial_ratio"], 0.30, places=2)
+        self.assertAlmostEqual(res_h1a["dcr"], 0.8067, places=3)
+
+        # Passing case governed by Eq. H1-1b (P_u / phi_Pn < 0.2)
+        res_h1b = verify_aisc_beam_column_interaction(
+            pu_kips=50.0,
+            mux_kip_ft=180.0,
+            muy_kip_ft=10.0,
+            phi_pn_kips=500.0,
+            phi_mnx_kip_ft=250.0,
+            phi_mny_kip_ft=60.0,
+        )
+        self.assertTrue(res_h1b["pass"])
+        self.assertEqual(res_h1b["governing_equation"], "H1-1b")
+        self.assertAlmostEqual(res_h1b["axial_ratio"], 0.10, places=2)
+        self.assertAlmostEqual(res_h1b["dcr"], 0.9367, places=3)
+
+        # B1 moment magnification check
+        res_b1 = verify_aisc_beam_column_interaction(
+            pu_kips=200.0,
+            mux_kip_ft=80.0,
+            muy_kip_ft=10.0,
+            phi_pn_kips=600.0,
+            phi_mnx_kip_ft=300.0,
+            phi_mny_kip_ft=80.0,
+            cm_x=1.0,
+            pe1_x_kips=1000.0,
+        )
+        self.assertTrue(res_b1["pass"])
+        self.assertAlmostEqual(res_b1["b1_x"], 1.25, places=2)
+        self.assertAlmostEqual(res_b1["m_rx_kip_ft"], 100.0, places=1)
+
+        # Overloaded interaction check failure
+        res_fail = verify_aisc_beam_column_interaction(
+            pu_kips=400.0,
+            mux_kip_ft=200.0,
+            muy_kip_ft=50.0,
+            phi_pn_kips=500.0,
+            phi_mnx_kip_ft=250.0,
+            phi_mny_kip_ft=60.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Euler buckling instability error
+        res_euler = verify_aisc_beam_column_interaction(
+            pu_kips=600.0,
+            mux_kip_ft=50.0,
+            muy_kip_ft=10.0,
+            phi_pn_kips=800.0,
+            phi_mnx_kip_ft=300.0,
+            phi_mny_kip_ft=100.0,
+            pe1_x_kips=500.0,
+        )
+        self.assertFalse(res_euler["pass"])
+        self.assertEqual(res_euler["reason"], "axial_load_exceeds_euler_buckling_x")
+
+        # Input error handling
+        res_nan = verify_aisc_beam_column_interaction(
+            pu_kips=float("nan"),
+            mux_kip_ft=50.0,
+            muy_kip_ft=10.0,
+            phi_pn_kips=500.0,
+            phi_mnx_kip_ft=200.0,
+            phi_mny_kip_ft=50.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_beam_column_interaction(
+            pu_kips=-10.0,
+            mux_kip_ft=50.0,
+            muy_kip_ft=10.0,
+            phi_pn_kips=500.0,
+            phi_mnx_kip_ft=200.0,
+            phi_mny_kip_ft=50.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
 
 
 if __name__ == "__main__":

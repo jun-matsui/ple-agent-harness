@@ -2005,3 +2005,93 @@ def verify_asce7_roof_snow_load(
         "cs": round(cs, 4),
         "is_low_slope": is_low_slope,
     }
+
+
+def verify_aisc_beam_column_interaction(
+    pu_kips: float,
+    mux_kip_ft: float,
+    muy_kip_ft: float,
+    phi_pn_kips: float,
+    phi_mnx_kip_ft: float,
+    phi_mny_kip_ft: float,
+    cm_x: float = 1.0,
+    cm_y: float = 1.0,
+    pe1_x_kips: float = 0.0,
+    pe1_y_kips: float = 0.0,
+    b1_x_override: float = 0.0,
+    b1_y_override: float = 0.0,
+) -> Dict[str, Any]:
+    """AISC 360-16 Chapter H & Appendix 8 combined axial compression and biaxial flexure interaction check."""
+    inputs = [
+        pu_kips,
+        mux_kip_ft,
+        muy_kip_ft,
+        phi_pn_kips,
+        phi_mnx_kip_ft,
+        phi_mny_kip_ft,
+        cm_x,
+        cm_y,
+        pe1_x_kips,
+        pe1_y_kips,
+        b1_x_override,
+        b1_y_override,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if min(pu_kips, mux_kip_ft, muy_kip_ft) < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if min(phi_pn_kips, phi_mnx_kip_ft, phi_mny_kip_ft) <= 0:
+        return {"pass": False, "reason": "non_positive_capacity"}
+    if not (0.0 < cm_x <= 1.0) or not (0.0 < cm_y <= 1.0):
+        return {"pass": False, "reason": "invalid_cm_factor"}
+    if pe1_x_kips < 0 or pe1_y_kips < 0:
+        return {"pass": False, "reason": "negative_euler_buckling"}
+    if (b1_x_override > 0 and b1_x_override < 1.0) or (b1_y_override > 0 and b1_y_override < 1.0):
+        return {"pass": False, "reason": "invalid_b1_override"}
+
+    # AISC 360-16 Appendix 8 Section 8.2.1 B1 moment magnification for x-axis
+    if b1_x_override > 0.0:
+        b1_x = b1_x_override
+    elif pe1_x_kips > 0.0:
+        if pu_kips >= pe1_x_kips:
+            return {"pass": False, "reason": "axial_load_exceeds_euler_buckling_x"}
+        b1_x = max(1.0, cm_x / (1.0 - (pu_kips / pe1_x_kips)))
+    else:
+        b1_x = 1.0
+
+    # AISC 360-16 Appendix 8 Section 8.2.1 B1 moment magnification for y-axis
+    if b1_y_override > 0.0:
+        b1_y = b1_y_override
+    elif pe1_y_kips > 0.0:
+        if pu_kips >= pe1_y_kips:
+            return {"pass": False, "reason": "axial_load_exceeds_euler_buckling_y"}
+        b1_y = max(1.0, cm_y / (1.0 - (pu_kips / pe1_y_kips)))
+    else:
+        b1_y = 1.0
+
+    m_rx = b1_x * mux_kip_ft
+    m_ry = b1_y * muy_kip_ft
+
+    p_ratio = pu_kips / phi_pn_kips
+    flex_ratio = (m_rx / phi_mnx_kip_ft) + (m_ry / phi_mny_kip_ft)
+
+    # AISC 360-16 Equations H1-1a and H1-1b
+    if p_ratio >= 0.20:
+        governing_eq = "H1-1a"
+        dcr = p_ratio + (8.0 / 9.0) * flex_ratio
+    else:
+        governing_eq = "H1-1b"
+        dcr = (p_ratio / 2.0) + flex_ratio
+
+    passed = dcr <= 1.0
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "governing_equation": governing_eq,
+        "axial_ratio": round(p_ratio, 4),
+        "flexure_ratio": round(flex_ratio, 4),
+        "b1_x": round(b1_x, 4),
+        "b1_y": round(b1_y, 4),
+        "m_rx_kip_ft": round(m_rx, 2),
+        "m_ry_kip_ft": round(m_ry, 2),
+    }

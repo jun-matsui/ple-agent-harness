@@ -1,0 +1,9 @@
+{
+  "score": 36.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_beam_column_interaction",
+    "rationale": "Fills a major structural PE/PLE code-gate gap by evaluating AISC 360-16 Chapter H (Eq. H1-1a and H1-1b) for members subjected to combined axial compression and biaxial bending, complete with Appendix 8 B1 moment magnification factors.",
+    "model": "gemini-3.8-flash"
+  }
+}
