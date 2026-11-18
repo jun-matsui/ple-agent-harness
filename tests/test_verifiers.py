@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_ashrae_expansion_tank_sizing,
     verify_cooling_tower_performance,
     verify_nfpa92_stairwell_pressurization,
     verify_open_channel_trapezoidal_flow,
@@ -4532,6 +4533,116 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_flow_or_capacity")
+
+
+    def test_ashrae_expansion_tank_sizing(self) -> None:
+        from harness.verifiers import verify_ashrae_expansion_tank_sizing
+
+        # Standard passing commercial hydronic heating loop (60F to 180F)
+        res_pass = verify_ashrae_expansion_tank_sizing(
+            system_volume_gal=1200.0,
+            t_initial_f=60.0,
+            t_max_f=180.0,
+            p_fill_psi=15.0,
+            p_relief_psi=45.0,
+            tank_volume_gal=85.0,
+            pressure_margin_psi=5.0,
+            tank_acceptance_gal=40.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["pressure_factor"], 0.4571, places=3)
+        self.assertAlmostEqual(res_pass["acceptance_volume_gal"], 32.73, places=1)
+        self.assertAlmostEqual(res_pass["v_tank_required_gal"], 71.60, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["volume_ok"])
+        self.assertTrue(res_pass["acceptance_ok"])
+
+        # Undersized expansion tank total volume failure
+        res_fail_vol = verify_ashrae_expansion_tank_sizing(
+            system_volume_gal=1200.0,
+            t_initial_f=60.0,
+            t_max_f=180.0,
+            p_fill_psi=15.0,
+            p_relief_psi=45.0,
+            tank_volume_gal=60.0,
+        )
+        self.assertFalse(res_fail_vol["pass"])
+        self.assertFalse(res_fail_vol["volume_ok"])
+        self.assertGreater(res_fail_vol["dcr"], 1.0)
+
+        # Tank volume sufficient but bladder acceptance volume undersized
+        res_fail_acc = verify_ashrae_expansion_tank_sizing(
+            system_volume_gal=1200.0,
+            t_initial_f=60.0,
+            t_max_f=180.0,
+            p_fill_psi=15.0,
+            p_relief_psi=45.0,
+            tank_volume_gal=90.0,
+            tank_acceptance_gal=25.0,
+        )
+        self.assertFalse(res_fail_acc["pass"])
+        self.assertFalse(res_fail_acc["acceptance_ok"])
+        self.assertTrue(res_fail_acc["volume_ok"])
+
+        # Glycol mixture requiring larger expansion volume
+        res_glycol = verify_ashrae_expansion_tank_sizing(
+            system_volume_gal=1200.0,
+            t_initial_f=60.0,
+            t_max_f=180.0,
+            p_fill_psi=15.0,
+            p_relief_psi=45.0,
+            tank_volume_gal=85.0,
+            glycol_expansion_factor=1.15,
+        )
+        self.assertGreater(res_glycol["acceptance_volume_gal"], res_pass["acceptance_volume_gal"])
+
+        # Temperature error: max temp <= initial temp
+        res_temp_err = verify_ashrae_expansion_tank_sizing(
+            system_volume_gal=1000.0,
+            t_initial_f=150.0,
+            t_max_f=120.0,
+            p_fill_psi=15.0,
+            p_relief_psi=45.0,
+            tank_volume_gal=50.0,
+        )
+        self.assertFalse(res_temp_err["pass"])
+        self.assertEqual(res_temp_err["reason"], "max_temp_not_greater_than_initial")
+
+        # Pressure error: max pressure <= fill pressure
+        res_press_err = verify_ashrae_expansion_tank_sizing(
+            system_volume_gal=1000.0,
+            t_initial_f=60.0,
+            t_max_f=180.0,
+            p_fill_psi=30.0,
+            p_relief_psi=30.0,
+            tank_volume_gal=50.0,
+            pressure_margin_psi=5.0,
+        )
+        self.assertFalse(res_press_err["pass"])
+        self.assertEqual(res_press_err["reason"], "max_pressure_not_greater_than_fill")
+
+        # Input error validation checks
+        res_nan = verify_ashrae_expansion_tank_sizing(
+            system_volume_gal=float("nan"),
+            t_initial_f=60.0,
+            t_max_f=180.0,
+            p_fill_psi=15.0,
+            p_relief_psi=45.0,
+            tank_volume_gal=50.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_ashrae_expansion_tank_sizing(
+            system_volume_gal=-1000.0,
+            t_initial_f=60.0,
+            t_max_f=180.0,
+            p_fill_psi=15.0,
+            p_relief_psi=45.0,
+            tank_volume_gal=50.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_volume_or_pressure")
 
 
 if __name__ == "__main__":

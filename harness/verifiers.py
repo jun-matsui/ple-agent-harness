@@ -4551,3 +4551,99 @@ def verify_cooling_tower_performance(
         "drift_ok": drift_ok,
         "makeup_ok": makeup_ok,
     }
+
+
+def verify_ashrae_expansion_tank_sizing(
+    system_volume_gal: float,
+    t_initial_f: float,
+    t_max_f: float,
+    p_fill_psi: float,
+    p_relief_psi: float,
+    tank_volume_gal: float,
+    pressure_margin_psi: float = 5.0,
+    tank_acceptance_gal: float = 0.0,
+    pipe_expansion_coeff: float = 6.5e-6,
+    glycol_expansion_factor: float = 1.0,
+    atmospheric_pressure_psi: float = 14.696,
+) -> Dict[str, Any]:
+    """ASHRAE Systems and Equipment Ch. 14 hydronic closed-loop expansion tank volume and acceptance check."""
+    inputs = [
+        system_volume_gal,
+        t_initial_f,
+        t_max_f,
+        p_fill_psi,
+        p_relief_psi,
+        tank_volume_gal,
+        pressure_margin_psi,
+        tank_acceptance_gal,
+        pipe_expansion_coeff,
+        glycol_expansion_factor,
+        atmospheric_pressure_psi,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if min(system_volume_gal, tank_volume_gal, atmospheric_pressure_psi) <= 0:
+        return {"pass": False, "reason": "non_positive_volume_or_pressure"}
+    if p_fill_psi < 0:
+        return {"pass": False, "reason": "negative_fill_pressure"}
+    if tank_acceptance_gal < 0 or pressure_margin_psi < 0 or pipe_expansion_coeff < 0:
+        return {"pass": False, "reason": "negative_margin_or_allowance"}
+    if glycol_expansion_factor < 1.0:
+        return {"pass": False, "reason": "invalid_glycol_factor"}
+    if t_initial_f < 32.0 or t_max_f > 250.0:
+        return {"pass": False, "reason": "temperature_out_of_water_liquid_range"}
+    if t_max_f <= t_initial_f:
+        return {"pass": False, "reason": "max_temp_not_greater_than_initial"}
+
+    p_max_psi = p_relief_psi - pressure_margin_psi
+    if p_max_psi <= p_fill_psi:
+        return {"pass": False, "reason": "max_pressure_not_greater_than_fill"}
+
+    def calc_water_density(t_f: float) -> float:
+        t_c = (t_f - 32.0) * (5.0 / 9.0)
+        # Tilton & Taylor formulation for pure water density (kg/m3 to lb/ft3)
+        num = ((t_c - 3.98) ** 2) * (t_c + 288.9414)
+        den = 508929.2 * (t_c + 68.12963)
+        rho_kg_m3 = 999.972 * (1.0 - (num / den))
+        return rho_kg_m3 * 0.06242796
+
+    rho_init = calc_water_density(t_initial_f)
+    rho_max = calc_water_density(t_max_f)
+    water_expansion_ratio = (rho_init / rho_max) - 1.0
+    e_liquid = water_expansion_ratio * glycol_expansion_factor
+
+    # Net expansion ratio accounting for 3D volumetric thermal expansion of piping
+    delta_t = t_max_f - t_initial_f
+    e_net = max(e_liquid - 3.0 * pipe_expansion_coeff * delta_t, 0.0)
+    v_e_gal = system_volume_gal * e_net
+
+    # Expansion tank pressure factor (PF)
+    p1_abs = p_fill_psi + atmospheric_pressure_psi
+    p2_abs = p_max_psi + atmospheric_pressure_psi
+    pf = (p2_abs - p1_abs) / p2_abs
+
+    v_t_req_gal = (v_e_gal / pf) if pf > 0 else float("inf")
+    tank_vol_dcr = v_t_req_gal / tank_volume_gal if tank_volume_gal > 0 else float("inf")
+    vol_ok = tank_vol_dcr <= 1.0
+
+    acceptance_dcr = None
+    acceptance_ok = True
+    if tank_acceptance_gal > 0.0:
+        acceptance_dcr = v_e_gal / tank_acceptance_gal
+        acceptance_ok = acceptance_dcr <= 1.0
+
+    gov_dcr = max(tank_vol_dcr, acceptance_dcr) if acceptance_dcr is not None else tank_vol_dcr
+    passed = vol_ok and acceptance_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "v_tank_required_gal": round(v_t_req_gal, 2),
+        "acceptance_volume_gal": round(v_e_gal, 2),
+        "pressure_factor": round(pf, 4),
+        "liquid_expansion_pct": round(e_liquid * 100.0, 3),
+        "net_expansion_pct": round(e_net * 100.0, 3),
+        "p_max_psi": round(p_max_psi, 2),
+        "volume_ok": vol_ok,
+        "acceptance_ok": acceptance_ok,
+    }

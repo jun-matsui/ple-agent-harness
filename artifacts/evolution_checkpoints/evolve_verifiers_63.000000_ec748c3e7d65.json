@@ -1,0 +1,9 @@
+{
+  "score": 63.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ashrae_expansion_tank_sizing",
+    "rationale": "Evaluates commercial hydronic heating/chilled water closed-loop expansion tank sizing per ASHRAE Systems & Equipment Ch. 14, checking liquid thermal expansion, pipe dilation, and bladder acceptance volume against relief valve margins.",
+    "model": "gemini-3.8-flash"
+  }
+}
