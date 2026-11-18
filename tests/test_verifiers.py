@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asce7_seismic_force_distribution,
     verify_aisc_web_local_yielding_and_crippling,
     verify_aisc_unbraced_beam_flexure,
     verify_aashto_stopping_sight_distance,
@@ -2621,6 +2622,92 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_k_err["pass"])
         self.assertEqual(res_k_err["reason"], "flange_or_k_exceeds_depth")
+
+
+    def test_asce7_seismic_force_distribution(self) -> None:
+        from harness.verifiers import verify_asce7_seismic_force_distribution
+
+        # Standard 3-story building passing case
+        res_pass = verify_asce7_seismic_force_distribution(
+            story_weights_kips=[1000.0, 1000.0, 800.0],
+            story_elevations_ft=[14.0, 28.0, 42.0],
+            story_shear_capacities_kips=[250.0, 200.0, 120.0],
+            base_shear_kips=200.0,
+            fundamental_period_s=1.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["k_exponent"], 1.25)
+        self.assertEqual(len(res_pass["story_forces_kips"]), 3)
+        self.assertAlmostEqual(res_pass["story_shears_kips"][0], 200.0, places=1)
+        self.assertEqual(res_pass["governing_story"], 2)
+        self.assertAlmostEqual(res_pass["dcr"], 0.8471, places=3)
+
+        # Capacity exceeded at upper story failure
+        res_fail = verify_asce7_seismic_force_distribution(
+            story_weights_kips=[1000.0, 1000.0, 800.0],
+            story_elevations_ft=[14.0, 28.0, 42.0],
+            story_shear_capacities_kips=[250.0, 200.0, 80.0],
+            base_shear_kips=200.0,
+            fundamental_period_s=1.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertEqual(res_fail["governing_story"], 3)
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Short period k = 1.0
+        res_short = verify_asce7_seismic_force_distribution(
+            story_weights_kips=[500.0, 500.0],
+            story_elevations_ft=[12.0, 24.0],
+            story_shear_capacities_kips=[150.0, 100.0],
+            base_shear_kips=100.0,
+            fundamental_period_s=0.4,
+        )
+        self.assertTrue(res_short["pass"])
+        self.assertEqual(res_short["k_exponent"], 1.0)
+
+        # Long period k = 2.0
+        res_long = verify_asce7_seismic_force_distribution(
+            story_weights_kips=[500.0, 500.0],
+            story_elevations_ft=[12.0, 24.0],
+            story_shear_capacities_kips=[150.0, 100.0],
+            base_shear_kips=100.0,
+            fundamental_period_s=3.0,
+        )
+        self.assertTrue(res_long["pass"])
+        self.assertEqual(res_long["k_exponent"], 2.0)
+
+        # Edge cases: Mismatched list lengths
+        res_mismatch = verify_asce7_seismic_force_distribution(
+            story_weights_kips=[1000.0, 1000.0],
+            story_elevations_ft=[14.0],
+            story_shear_capacities_kips=[200.0, 200.0],
+            base_shear_kips=100.0,
+            fundamental_period_s=0.5,
+        )
+        self.assertFalse(res_mismatch["pass"])
+        self.assertEqual(res_mismatch["reason"], "mismatched_story_data")
+
+        # Edge case: Non-increasing elevations
+        res_elev_err = verify_asce7_seismic_force_distribution(
+            story_weights_kips=[1000.0, 1000.0],
+            story_elevations_ft=[20.0, 15.0],
+            story_shear_capacities_kips=[200.0, 200.0],
+            base_shear_kips=100.0,
+            fundamental_period_s=0.5,
+        )
+        self.assertFalse(res_elev_err["pass"])
+        self.assertEqual(res_elev_err["reason"], "non_increasing_elevations")
+
+        # Edge case: NaN input
+        res_nan = verify_asce7_seismic_force_distribution(
+            story_weights_kips=[float("nan"), 1000.0],
+            story_elevations_ft=[14.0, 28.0],
+            story_shear_capacities_kips=[200.0, 200.0],
+            base_shear_kips=100.0,
+            fundamental_period_s=0.5,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
 
 
 if __name__ == "__main__":

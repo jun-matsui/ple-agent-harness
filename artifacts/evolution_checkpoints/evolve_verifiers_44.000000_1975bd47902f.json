@@ -1,0 +1,9 @@
+{
+  "score": 44.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asce7_seismic_force_distribution",
+    "rationale": "Verifies ASCE 7-16/7-22 Section 12.8.3 vertical distribution of seismic forces and story shear demands across multi-story structures, closing a critical gap in earthquake engineering PLE gates.",
+    "model": "gemini-3.8-flash"
+  }
+}

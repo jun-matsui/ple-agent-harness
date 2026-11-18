@@ -2700,3 +2700,75 @@ def verify_aisc_web_local_yielding_and_crippling(
         "governing_limit_state": limit_state,
         "stiffeners_required": not passed,
     }
+
+
+def verify_asce7_seismic_force_distribution(
+    story_weights_kips: Sequence[float],
+    story_elevations_ft: Sequence[float],
+    story_shear_capacities_kips: Sequence[float],
+    base_shear_kips: float,
+    fundamental_period_s: float,
+) -> Dict[str, Any]:
+    """ASCE 7-16/7-22 Section 12.8.3 vertical distribution of seismic forces and story shear capacity check."""
+    scalars = [base_shear_kips, fundamental_period_s]
+    if any(math.isnan(val) for val in scalars) or any(
+        math.isnan(x) for seq in (story_weights_kips, story_elevations_ft, story_shear_capacities_kips) for x in seq
+    ):
+        return {"pass": False, "reason": "nan_input"}
+
+    if not story_weights_kips or not story_elevations_ft or not story_shear_capacities_kips:
+        return {"pass": False, "reason": "empty_story_list"}
+
+    n = len(story_weights_kips)
+    if len(story_elevations_ft) != n or len(story_shear_capacities_kips) != n:
+        return {"pass": False, "reason": "mismatched_story_data"}
+
+    if base_shear_kips <= 0 or fundamental_period_s <= 0:
+        return {"pass": False, "reason": "non_positive_loading_or_capacity"}
+
+    if any(w <= 0 for w in story_weights_kips) or any(c <= 0 for c in story_shear_capacities_kips):
+        return {"pass": False, "reason": "non_positive_loading_or_capacity"}
+
+    for i, h in enumerate(story_elevations_ft):
+        prev = 0.0 if i == 0 else story_elevations_ft[i - 1]
+        if h <= prev:
+            return {"pass": False, "reason": "non_increasing_elevations"}
+
+    # ASCE 7-16 Section 12.8.3 structural period exponent k
+    if fundamental_period_s <= 0.5:
+        k = 1.0
+    elif fundamental_period_s >= 2.5:
+        k = 2.0
+    else:
+        k = 1.0 + (fundamental_period_s - 0.5) / 2.0
+
+    # ASCE 7-16 Eq. 12.8-12 vertical distribution factor Cvx
+    w_h_k = [w * (h ** k) for w, h in zip(story_weights_kips, story_elevations_ft)]
+    total_w_h_k = sum(w_h_k)
+    if total_w_h_k <= 0:
+        return {"pass": False, "reason": "zero_weight_elevation_product"}
+
+    c_vx = [val / total_w_h_k for val in w_h_k]
+    story_forces = [c * base_shear_kips for c in c_vx]
+
+    # ASCE 7-16 Section 12.8.4 story shear demand Vx summation from top down
+    story_shears = [0.0] * n
+    running_shear = 0.0
+    for i in range(n - 1, -1, -1):
+        running_shear += story_forces[i]
+        story_shears[i] = running_shear
+
+    story_dcrs = [v / cap for v, cap in zip(story_shears, story_shear_capacities_kips)]
+    governing_dcr = max(story_dcrs)
+    gov_story_idx = story_dcrs.index(governing_dcr) + 1
+
+    passed = governing_dcr <= 1.0
+    return {
+        "pass": passed,
+        "dcr": round(governing_dcr, 4),
+        "governing_story": gov_story_idx,
+        "k_exponent": round(k, 4),
+        "story_forces_kips": [round(f, 2) for f in story_forces],
+        "story_shears_kips": [round(v, 2) for v in story_shears],
+        "story_dcrs": [round(d, 4) for d in story_dcrs],
+    }
