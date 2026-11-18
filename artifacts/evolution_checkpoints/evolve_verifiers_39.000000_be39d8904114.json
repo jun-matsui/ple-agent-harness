@@ -1,0 +1,9 @@
+{
+  "score": 39.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asce7_story_drift_and_pdelta",
+    "rationale": "Directly resolves high-frequency Structural/Civil PE and PLE exam gaps by verifying ASCE 7-16/7-22 Section 12.8.6, 12.8.7, and 12.12.1 seismic design story drift, P-delta stability coefficient (theta), stability threshold (theta_max), and drift amplification factors.",
+    "model": "gemini-3.8-flash"
+  }
+}

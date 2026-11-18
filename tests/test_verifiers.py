@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asce7_story_drift_and_pdelta,
     verify_darcy_weisbach_pipe_flow,
     verify_aci_column_axial_load,
     verify_aisc_beam_column_interaction,
@@ -2186,6 +2187,93 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_k["pass"])
         self.assertEqual(res_inv_k["reason"], "negative_minor_loss")
+
+
+    def test_asce7_story_drift_and_pdelta(self) -> None:
+        from harness.verifiers import verify_asce7_story_drift_and_pdelta
+
+        # Standard passing case without P-delta magnification (theta <= 0.10)
+        res_pass = verify_asce7_story_drift_and_pdelta(
+            story_height_in=144.0,
+            elastic_drift_in=0.35,
+            cd_factor=4.0,
+            importance_factor_ie=1.0,
+            risk_category="II",
+            total_vertical_load_px_kips=2000.0,
+            story_shear_vx_kips=120.0,
+            shear_demand_capacity_ratio_beta=1.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["design_drift_in"], 1.40, places=2)
+        self.assertAlmostEqual(res_pass["allowable_drift_in"], 2.88, places=2)
+        self.assertAlmostEqual(res_pass["stability_coeff_theta"], 0.0405, places=4)
+        self.assertEqual(res_pass["theta_max"], 0.125)
+        self.assertFalse(res_pass["pdelta_required"])
+        self.assertEqual(res_pass["pdelta_amplifier"], 1.0)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # P-delta amplification required (0.10 < theta <= theta_max)
+        res_pdelta_amp = verify_asce7_story_drift_and_pdelta(
+            story_height_in=144.0,
+            elastic_drift_in=0.40,
+            cd_factor=4.0,
+            importance_factor_ie=1.0,
+            risk_category="II",
+            total_vertical_load_px_kips=3600.0,
+            story_shear_vx_kips=90.0,
+        )
+        self.assertTrue(res_pdelta_amp["pass"])
+        self.assertTrue(res_pdelta_amp["pdelta_required"])
+        self.assertAlmostEqual(res_pdelta_amp["stability_coeff_theta"], 0.1111, places=3)
+        self.assertGreater(res_pdelta_amp["pdelta_amplifier"], 1.0)
+        self.assertAlmostEqual(res_pdelta_amp["pdelta_amplifier"], 1.125, places=2)
+        self.assertAlmostEqual(res_pdelta_amp["design_drift_in"], 1.80, places=2)
+
+        # Story drift limit exceeded failure (dcr > 1.0)
+        res_fail_drift = verify_asce7_story_drift_and_pdelta(
+            story_height_in=144.0,
+            elastic_drift_in=0.85,
+            cd_factor=4.0,
+            risk_category="II",
+        )
+        self.assertFalse(res_fail_drift["pass"])
+        self.assertGreater(res_fail_drift["dcr"], 1.0)
+
+        # Stability coefficient exceeds theta_max (structural instability)
+        res_fail_stability = verify_asce7_story_drift_and_pdelta(
+            story_height_in=144.0,
+            elastic_drift_in=0.30,
+            cd_factor=4.0,
+            risk_category="II",
+            total_vertical_load_px_kips=6000.0,
+            story_shear_vx_kips=80.0,
+        )
+        self.assertFalse(res_fail_stability["pass"])
+        self.assertFalse(res_fail_stability["stability_ok"])
+        self.assertGreater(res_fail_stability["stability_coeff_theta"], res_fail_stability["theta_max"])
+
+        # Input error validation
+        res_nan = verify_asce7_story_drift_and_pdelta(
+            story_height_in=float("nan"),
+            elastic_drift_in=0.30,
+            cd_factor=4.0,
+        )
+        self.assertFalse(res_nan["pass"]); self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_asce7_story_drift_and_pdelta(
+            story_height_in=144.0,
+            elastic_drift_in=-0.10,
+            cd_factor=4.0,
+        )
+        self.assertFalse(res_neg["pass"]); self.assertEqual(res_neg["reason"], "negative_drift_input")
+
+        res_inv_cat = verify_asce7_story_drift_and_pdelta(
+            story_height_in=144.0,
+            elastic_drift_in=0.30,
+            cd_factor=4.0,
+            risk_category="V",
+        )
+        self.assertFalse(res_inv_cat["pass"]); self.assertEqual(res_inv_cat["reason"], "invalid_risk_category")
 
 
 if __name__ == "__main__":

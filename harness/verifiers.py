@@ -2283,3 +2283,90 @@ def verify_darcy_weisbach_pipe_flow(
         "total_head_loss_ft": round(total_head_loss_ft, 3),
         "pressure_drop_psi": round(pressure_drop_psi, 4),
     }
+
+
+def verify_asce7_story_drift_and_pdelta(
+    story_height_in: float,
+    elastic_drift_in: float,
+    cd_factor: float,
+    importance_factor_ie: float = 1.0,
+    risk_category: str = "II",
+    allowable_drift_ratio_override: float = 0.0,
+    total_vertical_load_px_kips: float = 0.0,
+    story_shear_vx_kips: float = 0.0,
+    shear_demand_capacity_ratio_beta: float = 1.0,
+) -> Dict[str, Any]:
+    """ASCE 7-16/7-22 Section 12.8.6, 12.8.7, & 12.12.1 seismic story drift and P-delta stability check."""
+    inputs = [
+        story_height_in,
+        elastic_drift_in,
+        cd_factor,
+        importance_factor_ie,
+        allowable_drift_ratio_override,
+        total_vertical_load_px_kips,
+        story_shear_vx_kips,
+        shear_demand_capacity_ratio_beta,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if story_height_in <= 0 or cd_factor <= 0 or importance_factor_ie <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_factor"}
+    if elastic_drift_in < 0:
+        return {"pass": False, "reason": "negative_drift_input"}
+    if total_vertical_load_px_kips < 0 or story_shear_vx_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if shear_demand_capacity_ratio_beta <= 0:
+        return {"pass": False, "reason": "non_positive_beta_ratio"}
+
+    # ASCE 7 Table 12.12-1 allowable story drift ratios
+    cat = risk_category.strip().upper()
+    category_limits: Dict[str, float] = {"I": 0.020, "II": 0.020, "III": 0.015, "IV": 0.010}
+    if allowable_drift_ratio_override > 0.0:
+        allowable_ratio = allowable_drift_ratio_override
+    elif cat in category_limits:
+        allowable_ratio = category_limits[cat]
+    else:
+        return {"pass": False, "reason": "invalid_risk_category"}
+
+    delta_allowable_in = allowable_ratio * story_height_in
+
+    # ASCE 7 Eq. 12.8-15 design story drift Delta = Cd * delta_xe / Ie
+    delta_unmagnified_in = (cd_factor * elastic_drift_in) / importance_factor_ie
+
+    # ASCE 7 Section 12.8.7 P-Delta stability coefficient theta = (Px * delta_xe) / (Vx * hsx)
+    if total_vertical_load_px_kips > 0.0 and story_shear_vx_kips > 0.0:
+        theta = (total_vertical_load_px_kips * elastic_drift_in) / (
+            story_shear_vx_kips * story_height_in
+        )
+        theta_max = min(0.50 / (shear_demand_capacity_ratio_beta * cd_factor), 0.25)
+        stability_ok = theta <= theta_max
+        pdelta_required = theta > 0.10
+        if theta >= 1.0:
+            a_d = float("inf")
+        elif pdelta_required:
+            a_d = 1.0 / (1.0 - theta)
+        else:
+            a_d = 1.0
+    else:
+        theta = None
+        theta_max = None
+        stability_ok = True
+        pdelta_required = False
+        a_d = 1.0
+
+    delta_design_in = a_d * delta_unmagnified_in if not math.isinf(a_d) else float("inf")
+    drift_dcr = delta_design_in / delta_allowable_in if delta_allowable_in > 0 else float("inf")
+
+    passed = (drift_dcr <= 1.0) and stability_ok
+    return {
+        "pass": passed,
+        "dcr": round(drift_dcr, 4),
+        "design_drift_in": round(delta_design_in, 4),
+        "unmagnified_drift_in": round(delta_unmagnified_in, 4),
+        "allowable_drift_in": round(delta_allowable_in, 4),
+        "stability_coeff_theta": round(theta, 4) if theta is not None else None,
+        "theta_max": round(theta_max, 4) if theta_max is not None else None,
+        "pdelta_amplifier": round(a_d, 4),
+        "pdelta_required": pdelta_required,
+        "stability_ok": stability_ok,
+    }
