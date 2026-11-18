@@ -2191,3 +2191,95 @@ def verify_aci_column_axial_load(
         "rho_s_provided": round(rho_s_provided, 5) if rho_s_provided is not None else None,
         "rho_s_min": round(rho_s_min, 5) if rho_s_min is not None else None,
     }
+
+
+def verify_darcy_weisbach_pipe_flow(
+    flow_rate_gpm: float,
+    diameter_in: float,
+    pipe_length_ft: float,
+    roughness_in: float = 0.0018,
+    fluid_density_pcf: float = 62.4,
+    kinematic_viscosity_ft2_s: float = 1.08e-5,
+    minor_loss_k: float = 0.0,
+    max_velocity_fps: float = 10.0,
+    max_pressure_drop_psi: float = 15.0,
+) -> Dict[str, Any]:
+    """Darcy-Weisbach fluid pipe friction head loss, velocity, and pressure drop check via Swamee-Jain."""
+    inputs = [
+        flow_rate_gpm,
+        diameter_in,
+        pipe_length_ft,
+        roughness_in,
+        fluid_density_pcf,
+        kinematic_viscosity_ft2_s,
+        minor_loss_k,
+        max_velocity_fps,
+        max_pressure_drop_psi,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if flow_rate_gpm < 0:
+        return {"pass": False, "reason": "negative_flow_rate"}
+    if (
+        min(
+            diameter_in,
+            pipe_length_ft,
+            roughness_in,
+            fluid_density_pcf,
+            kinematic_viscosity_ft2_s,
+            max_velocity_fps,
+            max_pressure_drop_psi,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_fluid_property"}
+    if minor_loss_k < 0:
+        return {"pass": False, "reason": "negative_minor_loss"}
+
+    d_ft = diameter_in / 12.0
+    area_ft2 = (math.pi * (d_ft**2)) / 4.0
+    q_cfs = flow_rate_gpm / 448.831169
+    velocity_fps = q_cfs / area_ft2 if area_ft2 > 0 else 0.0
+    g = 32.174
+
+    if velocity_fps == 0.0:
+        reynolds = 0.0
+        f = 0.0
+        regime = "quiescent"
+    else:
+        reynolds = (velocity_fps * d_ft) / kinematic_viscosity_ft2_s
+        if reynolds <= 2000.0:
+            regime = "laminar"
+            f = 64.0 / reynolds
+        else:
+            regime = "transitional" if reynolds < 4000.0 else "turbulent"
+            rel_roughness = roughness_in / diameter_in
+            term = (rel_roughness / 3.7) + (5.74 / (reynolds**0.9))
+            f = 0.25 / (math.log10(term) ** 2)
+
+    # Darcy-Weisbach major friction head loss and minor loss
+    v_head_ft = (velocity_fps**2) / (2.0 * g)
+    h_f_ft = (f * (pipe_length_ft / d_ft) * v_head_ft) if d_ft > 0 else 0.0
+    h_m_ft = minor_loss_k * v_head_ft
+    total_head_loss_ft = h_f_ft + h_m_ft
+
+    # Pressure drop delta P = (rho * h_L) / 144 psi
+    pressure_drop_psi = (fluid_density_pcf * total_head_loss_ft) / 144.0
+
+    vel_dcr = velocity_fps / max_velocity_fps
+    press_dcr = pressure_drop_psi / max_pressure_drop_psi
+    gov_dcr = max(vel_dcr, press_dcr)
+
+    passed = (vel_dcr <= 1.0) and (press_dcr <= 1.0)
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "velocity_fps": round(velocity_fps, 3),
+        "reynolds_number": round(reynolds, 1),
+        "friction_factor": round(f, 5),
+        "flow_regime": regime,
+        "head_loss_friction_ft": round(h_f_ft, 3),
+        "head_loss_minor_ft": round(h_m_ft, 3),
+        "total_head_loss_ft": round(total_head_loss_ft, 3),
+        "pressure_drop_psi": round(pressure_drop_psi, 4),
+    }

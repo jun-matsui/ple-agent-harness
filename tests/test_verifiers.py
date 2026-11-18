@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_darcy_weisbach_pipe_flow,
     verify_aci_column_axial_load,
     verify_aisc_beam_column_interaction,
     verify_asce7_roof_snow_load,
@@ -2096,6 +2097,95 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_type["pass"])
         self.assertEqual(res_inv_type["reason"], "invalid_transverse_type")
+
+
+    def test_darcy_weisbach_pipe_flow(self) -> None:
+        from harness.verifiers import verify_darcy_weisbach_pipe_flow
+
+        # Standard turbulent water pipe passing case
+        res_pass = verify_darcy_weisbach_pipe_flow(
+            flow_rate_gpm=150.0,
+            diameter_in=4.026,
+            pipe_length_ft=200.0,
+            roughness_in=0.0018,
+            max_velocity_fps=8.0,
+            max_pressure_drop_psi=5.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertEqual(res_pass["flow_regime"], "turbulent")
+        self.assertGreater(res_pass["reynolds_number"], 4000.0)
+        self.assertAlmostEqual(res_pass["velocity_fps"], 3.78, places=1)
+        self.assertLess(res_pass["pressure_drop_psi"], 2.0)
+
+        # Laminar flow branch check with viscous fluid
+        res_laminar = verify_darcy_weisbach_pipe_flow(
+            flow_rate_gpm=5.0,
+            diameter_in=2.0,
+            pipe_length_ft=50.0,
+            kinematic_viscosity_ft2_s=1.0e-3,
+            max_velocity_fps=5.0,
+            max_pressure_drop_psi=10.0,
+        )
+        self.assertTrue(res_laminar["pass"])
+        self.assertEqual(res_laminar["flow_regime"], "laminar")
+        self.assertLessEqual(res_laminar["reynolds_number"], 2000.0)
+        self.assertAlmostEqual(
+            res_laminar["friction_factor"],
+            64.0 / res_laminar["reynolds_number"],
+            places=4,
+        )
+
+        # Minor loss addition check
+        res_minor = verify_darcy_weisbach_pipe_flow(
+            flow_rate_gpm=150.0,
+            diameter_in=4.026,
+            pipe_length_ft=200.0,
+            minor_loss_k=10.0,
+        )
+        self.assertTrue(res_minor["pass"])
+        self.assertGreater(res_minor["head_loss_minor_ft"], 0.0)
+        self.assertAlmostEqual(
+            res_minor["total_head_loss_ft"],
+            res_minor["head_loss_friction_ft"] + res_minor["head_loss_minor_ft"],
+            places=3,
+        )
+
+        # Velocity limit exceeded failure
+        res_vel_fail = verify_darcy_weisbach_pipe_flow(
+            flow_rate_gpm=500.0,
+            diameter_in=4.026,
+            pipe_length_ft=100.0,
+            max_velocity_fps=10.0,
+        )
+        self.assertFalse(res_vel_fail["pass"])
+        self.assertGreater(res_vel_fail["dcr"], 1.0)
+
+        # Input validation checks
+        res_nan = verify_darcy_weisbach_pipe_flow(
+            flow_rate_gpm=float("nan"),
+            diameter_in=4.0,
+            pipe_length_ft=100.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_darcy_weisbach_pipe_flow(
+            flow_rate_gpm=-50.0,
+            diameter_in=4.0,
+            pipe_length_ft=100.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_flow_rate")
+
+        res_inv_k = verify_darcy_weisbach_pipe_flow(
+            flow_rate_gpm=50.0,
+            diameter_in=4.0,
+            pipe_length_ft=100.0,
+            minor_loss_k=-2.0,
+        )
+        self.assertFalse(res_inv_k["pass"])
+        self.assertEqual(res_inv_k["reason"], "negative_minor_loss")
 
 
 if __name__ == "__main__":

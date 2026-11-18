@@ -1,0 +1,9 @@
+{
+  "score": 38.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_darcy_weisbach_pipe_flow",
+    "rationale": "Extends the PLE library into universal fluid mechanics and process piping (Mechanical/Civil Water PE) by replacing empirical Hazen-Williams limitations with rigorous Darcy-Weisbach head loss, laminar/turbulent regime branching, and Swamee-Jain explicit friction factor computation.",
+    "model": "gemini-3.8-flash"
+  }
+}
