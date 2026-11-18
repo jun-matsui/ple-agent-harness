@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_clay_consolidation_settlement,
     verify_aisc_tension_member,
     verify_nec_conduit_fill,
     verify_aisc_fillet_weld,
@@ -1210,6 +1211,90 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_input")
+
+
+    def test_clay_consolidation_settlement(self) -> None:
+        from harness.verifiers import verify_clay_consolidation_settlement
+
+        res_pass_oc = verify_clay_consolidation_settlement(
+            layer_thickness_ft=10.0,
+            initial_void_ratio=0.80,
+            compression_index_cc=0.30,
+            recompression_index_cr=0.05,
+            initial_effective_stress_psf=2000.0,
+            preconsolidation_stress_psf=3000.0,
+            stress_increase_psf=2000.0,
+            allowable_settlement_in=4.0,
+        )
+        self.assertTrue(res_pass_oc["pass"])
+        self.assertLess(res_pass_oc["dcr"], 1.0)
+        self.assertEqual(res_pass_oc["consolidation_state"], "overconsolidated_virgin")
+        self.assertAlmostEqual(res_pass_oc["ocr"], 1.5, places=2)
+        self.assertAlmostEqual(res_pass_oc["settlement_in"], 3.0858, places=3)
+
+        res_elastic = verify_clay_consolidation_settlement(
+            layer_thickness_ft=10.0,
+            initial_void_ratio=0.80,
+            compression_index_cc=0.30,
+            recompression_index_cr=0.05,
+            initial_effective_stress_psf=2000.0,
+            preconsolidation_stress_psf=3000.0,
+            stress_increase_psf=500.0,
+            allowable_settlement_in=1.0,
+        )
+        self.assertTrue(res_elastic["pass"])
+        self.assertEqual(res_elastic["consolidation_state"], "overconsolidated_elastic")
+        self.assertLess(res_elastic["settlement_in"], 0.50)
+
+        res_fail_nc = verify_clay_consolidation_settlement(
+            layer_thickness_ft=15.0,
+            initial_void_ratio=0.90,
+            compression_index_cc=0.40,
+            recompression_index_cr=0.06,
+            initial_effective_stress_psf=1500.0,
+            preconsolidation_stress_psf=1500.0,
+            stress_increase_psf=1800.0,
+            allowable_settlement_in=1.5,
+        )
+        self.assertFalse(res_fail_nc["pass"])
+        self.assertEqual(res_fail_nc["consolidation_state"], "normally_consolidated")
+        self.assertGreater(res_fail_nc["dcr"], 1.0)
+
+        res_cr_err = verify_clay_consolidation_settlement(
+            layer_thickness_ft=10.0,
+            initial_void_ratio=0.80,
+            compression_index_cc=0.10,
+            recompression_index_cr=0.25,
+            initial_effective_stress_psf=2000.0,
+            preconsolidation_stress_psf=3000.0,
+            stress_increase_psf=1000.0,
+        )
+        self.assertFalse(res_cr_err["pass"])
+        self.assertEqual(res_cr_err["reason"], "recompression_index_exceeds_compression_index")
+
+        res_nan = verify_clay_consolidation_settlement(
+            layer_thickness_ft=float("nan"),
+            initial_void_ratio=0.80,
+            compression_index_cc=0.30,
+            recompression_index_cr=0.05,
+            initial_effective_stress_psf=2000.0,
+            preconsolidation_stress_psf=3000.0,
+            stress_increase_psf=1000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_clay_consolidation_settlement(
+            layer_thickness_ft=10.0,
+            initial_void_ratio=0.80,
+            compression_index_cc=0.30,
+            recompression_index_cr=0.05,
+            initial_effective_stress_psf=2000.0,
+            preconsolidation_stress_psf=3000.0,
+            stress_increase_psf=-500.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_stress_increase")
 
 
 if __name__ == "__main__":

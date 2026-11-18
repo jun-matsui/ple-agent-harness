@@ -1,0 +1,9 @@
+{
+  "score": 28.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_clay_consolidation_settlement",
+    "rationale": "Fills a critical civil/geotechnical code-gate gap by implementing Terzaghi's 1D consolidation settlement theory across normally consolidated and overconsolidated soil regimes with preconsolidation pressure transitions.",
+    "model": "gemini-3.8-flash"
+  }
+}

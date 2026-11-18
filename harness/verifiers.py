@@ -1345,3 +1345,88 @@ def verify_aisc_tension_member(
         "effective_net_area_in2": round(ae_in2, 3),
         "slenderness_ratio": round(slenderness, 2),
     }
+
+
+def verify_clay_consolidation_settlement(
+    layer_thickness_ft: float,
+    initial_void_ratio: float,
+    compression_index_cc: float,
+    recompression_index_cr: float,
+    initial_effective_stress_psf: float,
+    preconsolidation_stress_psf: float,
+    stress_increase_psf: float,
+    allowable_settlement_in: float = 1.0,
+) -> Dict[str, Any]:
+    """Terzaghi 1D clay consolidation settlement and allowable deformation gate."""
+    inputs = [
+        layer_thickness_ft,
+        initial_void_ratio,
+        compression_index_cc,
+        recompression_index_cr,
+        initial_effective_stress_psf,
+        preconsolidation_stress_psf,
+        stress_increase_psf,
+        allowable_settlement_in,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            layer_thickness_ft,
+            initial_void_ratio,
+            compression_index_cc,
+            recompression_index_cr,
+            initial_effective_stress_psf,
+            preconsolidation_stress_psf,
+            allowable_settlement_in,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_soil_parameter"}
+    if stress_increase_psf < 0:
+        return {"pass": False, "reason": "negative_stress_increase"}
+    if recompression_index_cr > compression_index_cc:
+        return {"pass": False, "reason": "recompression_index_exceeds_compression_index"}
+
+    ocr = preconsolidation_stress_psf / initial_effective_stress_psf
+    sigma_f = initial_effective_stress_psf + stress_increase_psf
+
+    if stress_increase_psf == 0.0:
+        s_c_ft = 0.0
+        state = "normally_consolidated" if ocr <= 1.0 else "overconsolidated_elastic"
+    elif ocr <= 1.0:
+        state = "normally_consolidated"
+        s_c_ft = (
+            (compression_index_cc * layer_thickness_ft / (1.0 + initial_void_ratio))
+            * math.log10(sigma_f / initial_effective_stress_psf)
+        )
+    elif sigma_f <= preconsolidation_stress_psf:
+        state = "overconsolidated_elastic"
+        s_c_ft = (
+            (recompression_index_cr * layer_thickness_ft / (1.0 + initial_void_ratio))
+            * math.log10(sigma_f / initial_effective_stress_psf)
+        )
+    else:
+        state = "overconsolidated_virgin"
+        s_cr = (
+            (recompression_index_cr * layer_thickness_ft / (1.0 + initial_void_ratio))
+            * math.log10(preconsolidation_stress_psf / initial_effective_stress_psf)
+        )
+        s_cc = (
+            (compression_index_cc * layer_thickness_ft / (1.0 + initial_void_ratio))
+            * math.log10(sigma_f / preconsolidation_stress_psf)
+        )
+        s_c_ft = s_cr + s_cc
+
+    settlement_in = s_c_ft * 12.0
+    dcr = settlement_in / allowable_settlement_in if allowable_settlement_in > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "settlement_in": round(settlement_in, 4),
+        "ocr": round(ocr, 3),
+        "consolidation_state": state,
+        "sigma_final_psf": round(sigma_f, 2),
+    }
