@@ -1,0 +1,6 @@
+name: grandmaster-code-gated-ple
+model_api: google-cloud/gemini-4-argon
+install: >-
+  uv venv --python 3.12 /opt/harness/venv
+  && uv pip install --python /opt/harness/venv/bin/python -r {src}/harness/requirements.txt
+serve: /opt/harness/venv/bin/python {src}/serve.py
