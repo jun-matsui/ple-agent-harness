@@ -1,0 +1,9 @@
+{
+  "score": 27.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_tension_member",
+    "rationale": "AISC 360-16 Chapter D (Sections D1 and D2) tensile yielding and rupture checks are ubiquitous in structural PE/PLE exams, closing the design coverage alongside existing column, beam, weld, and bolt verifiers.",
+    "model": "gemini-3.8-flash"
+  }
+}

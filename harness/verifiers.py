@@ -1277,3 +1277,71 @@ def verify_nec_conduit_fill(
         "conduit_area_sqin": round(conduit_area_sqin, 4),
         "conductor_count": num_conductors,
     }
+
+
+def verify_aisc_tension_member(
+    pu_kips: float,
+    ag_in2: float,
+    an_in2: float,
+    u_shear_lag: float,
+    length_in: float,
+    rx_in: float,
+    ry_in: float,
+    fy_ksi: float = 50.0,
+    fu_ksi: float = 65.0,
+    max_slenderness: float = 300.0,
+) -> Dict[str, Any]:
+    """AISC 360-16 Chapter D LRFD check for tension members (gross yielding, net rupture, and slenderness)."""
+    inputs = [
+        pu_kips,
+        ag_in2,
+        an_in2,
+        u_shear_lag,
+        length_in,
+        rx_in,
+        ry_in,
+        fy_ksi,
+        fu_ksi,
+        max_slenderness,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if pu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(ag_in2, an_in2, length_in, rx_in, ry_in, fy_ksi, fu_ksi, max_slenderness) <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if an_in2 > ag_in2:
+        return {"pass": False, "reason": "net_area_exceeds_gross_area"}
+    if not (0.0 < u_shear_lag <= 1.0):
+        return {"pass": False, "reason": "invalid_shear_lag_factor"}
+
+    # AISC 360-16 Section D1 slenderness limit recommendation (L/r <= 300)
+    r_min = min(rx_in, ry_in)
+    slenderness = length_in / r_min
+
+    # AISC 360-16 Section D2(a) Tensile yielding in the gross section (phi = 0.90)
+    phi_t_yield = 0.90
+    phi_pny_kips = phi_t_yield * fy_ksi * ag_in2
+
+    # AISC 360-16 Section D2(b) Tensile rupture in the net section (phi = 0.75, Ae = U * An)
+    ae_in2 = u_shear_lag * an_in2
+    phi_t_rupture = 0.75
+    phi_pnr_kips = phi_t_rupture * fu_ksi * ae_in2
+
+    phi_pn_kips = min(phi_pny_kips, phi_pnr_kips)
+    limit_state = "gross_yielding" if phi_pny_kips <= phi_pnr_kips else "net_rupture"
+    dcr = pu_kips / phi_pn_kips if phi_pn_kips > 0 else float("inf")
+
+    passed = (dcr <= 1.0) and (slenderness <= max_slenderness)
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_pn_kips": round(phi_pn_kips, 2),
+        "phi_pny_kips": round(phi_pny_kips, 2),
+        "phi_pnr_kips": round(phi_pnr_kips, 2),
+        "governing_limit_state": limit_state,
+        "effective_net_area_in2": round(ae_in2, 3),
+        "slenderness_ratio": round(slenderness, 2),
+    }

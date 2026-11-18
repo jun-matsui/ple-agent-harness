@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_tension_member,
     verify_nec_conduit_fill,
     verify_aisc_fillet_weld,
     verify_nec_solar_busbar_interconnection,
@@ -1100,6 +1101,115 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_conduit_diameter")
+
+
+    def test_aisc_tension_member(self) -> None:
+        from harness.verifiers import verify_aisc_tension_member
+
+        res_pass = verify_aisc_tension_member(
+            pu_kips=150.0,
+            ag_in2=6.0,
+            an_in2=5.0,
+            u_shear_lag=0.85,
+            length_in=180.0,
+            rx_in=2.5,
+            ry_in=1.5,
+            fy_ksi=50.0,
+            fu_ksi=65.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertEqual(res_pass["governing_limit_state"], "net_rupture")
+        self.assertAlmostEqual(res_pass["phi_pny_kips"], 270.0, places=1)
+        self.assertAlmostEqual(res_pass["phi_pnr_kips"], 207.19, places=1)
+        self.assertEqual(res_pass["slenderness_ratio"], 120.0)
+
+        res_yield = verify_aisc_tension_member(
+            pu_kips=180.0,
+            ag_in2=4.5,
+            an_in2=4.2,
+            u_shear_lag=1.0,
+            length_in=120.0,
+            rx_in=2.0,
+            ry_in=1.2,
+            fy_ksi=50.0,
+            fu_ksi=65.0,
+        )
+        self.assertTrue(res_yield["pass"])
+        self.assertEqual(res_yield["governing_limit_state"], "gross_yielding")
+        self.assertAlmostEqual(res_yield["phi_pny_kips"], 202.5, places=1)
+
+        res_fail_dcr = verify_aisc_tension_member(
+            pu_kips=220.0,
+            ag_in2=6.0,
+            an_in2=5.0,
+            u_shear_lag=0.85,
+            length_in=180.0,
+            rx_in=2.5,
+            ry_in=1.5,
+        )
+        self.assertFalse(res_fail_dcr["pass"])
+        self.assertGreater(res_fail_dcr["dcr"], 1.0)
+
+        res_fail_slender = verify_aisc_tension_member(
+            pu_kips=50.0,
+            ag_in2=6.0,
+            an_in2=5.0,
+            u_shear_lag=0.85,
+            length_in=480.0,
+            rx_in=2.5,
+            ry_in=1.0,
+        )
+        self.assertFalse(res_fail_slender["pass"])
+        self.assertGreater(res_fail_slender["slenderness_ratio"], 300.0)
+
+        res_area_err = verify_aisc_tension_member(
+            pu_kips=50.0,
+            ag_in2=4.0,
+            an_in2=5.0,
+            u_shear_lag=0.85,
+            length_in=120.0,
+            rx_in=2.0,
+            ry_in=1.0,
+        )
+        self.assertFalse(res_area_err["pass"])
+        self.assertEqual(res_area_err["reason"], "net_area_exceeds_gross_area")
+
+        res_u_err = verify_aisc_tension_member(
+            pu_kips=50.0,
+            ag_in2=6.0,
+            an_in2=5.0,
+            u_shear_lag=1.2,
+            length_in=120.0,
+            rx_in=2.0,
+            ry_in=1.0,
+        )
+        self.assertFalse(res_u_err["pass"])
+        self.assertEqual(res_u_err["reason"], "invalid_shear_lag_factor")
+
+        res_nan = verify_aisc_tension_member(
+            pu_kips=float("nan"),
+            ag_in2=6.0,
+            an_in2=5.0,
+            u_shear_lag=0.85,
+            length_in=120.0,
+            rx_in=2.0,
+            ry_in=1.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_tension_member(
+            pu_kips=-10.0,
+            ag_in2=6.0,
+            an_in2=5.0,
+            u_shear_lag=0.85,
+            length_in=120.0,
+            rx_in=2.0,
+            ry_in=1.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
 
 
 if __name__ == "__main__":
