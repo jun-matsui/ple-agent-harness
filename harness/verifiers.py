@@ -3904,3 +3904,92 @@ def verify_asme_bpvc_vessel_thickness(
         "mawp_psi": round(mawp_psi, 2),
         "component_type": c_type,
     }
+
+
+def verify_infinite_slope_stability(
+    slope_angle_deg: float,
+    depth_z_ft: float,
+    soil_cohesion_psf: float,
+    soil_friction_angle_deg: float,
+    soil_unit_weight_pcf: float,
+    water_table_height_ft: float = 0.0,
+    sat_unit_weight_pcf: float = 0.0,
+    seismic_coeff_kh: float = 0.0,
+    min_fs: float = 1.5,
+) -> Dict[str, Any]:
+    """Geotechnical infinite slope stability and steady seepage factor of safety check."""
+    scalars = [
+        slope_angle_deg,
+        depth_z_ft,
+        soil_cohesion_psf,
+        soil_friction_angle_deg,
+        soil_unit_weight_pcf,
+        water_table_height_ft,
+        sat_unit_weight_pcf,
+        seismic_coeff_kh,
+        min_fs,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if depth_z_ft <= 0 or soil_unit_weight_pcf <= 0 or min_fs <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_soil_property"}
+    if not (0.0 < slope_angle_deg < 90.0):
+        return {"pass": False, "reason": "invalid_slope_angle"}
+    if not (0.0 <= soil_friction_angle_deg < 90.0):
+        return {"pass": False, "reason": "invalid_friction_angle"}
+    if soil_cohesion_psf < 0.0:
+        return {"pass": False, "reason": "negative_cohesion"}
+    if water_table_height_ft < 0.0:
+        return {"pass": False, "reason": "negative_water_table_height"}
+    if water_table_height_ft > depth_z_ft:
+        return {"pass": False, "reason": "water_table_exceeds_depth"}
+    if seismic_coeff_kh < 0.0:
+        return {"pass": False, "reason": "negative_seismic_coefficient"}
+    if sat_unit_weight_pcf < 0.0:
+        return {"pass": False, "reason": "negative_sat_unit_weight"}
+
+    gamma_moist = soil_unit_weight_pcf
+    gamma_sat = sat_unit_weight_pcf if sat_unit_weight_pcf > 0.0 else gamma_moist
+    gamma_w = 62.4
+
+    hw = water_table_height_ft
+    z = depth_z_ft
+    beta_rad = math.radians(slope_angle_deg)
+    phi_rad = math.radians(soil_friction_angle_deg)
+
+    cos_b = math.cos(beta_rad)
+    sin_b = math.sin(beta_rad)
+
+    # Total weight per unit base area on slope failure plane
+    total_soil_wt = gamma_moist * (z - hw) + gamma_sat * hw
+
+    # Driving shear stress along the failure plane
+    tau_driving = total_soil_wt * (sin_b * cos_b + seismic_coeff_kh * (cos_b ** 2))
+
+    # Normal total stress on the failure plane
+    sigma_total = total_soil_wt * (cos_b ** 2 - seismic_coeff_kh * sin_b * cos_b)
+
+    # Pore water pressure for steady seepage parallel to the slope
+    u_pore = gamma_w * hw * (cos_b ** 2)
+    sigma_effective = max(0.0, sigma_total - u_pore)
+
+    # Mohr-Coulomb available shear strength
+    tau_resisting = soil_cohesion_psf + sigma_effective * math.tan(phi_rad)
+
+    if tau_driving <= 0.0:
+        fs = float("inf")
+        dcr = 0.0
+    else:
+        fs = tau_resisting / tau_driving
+        dcr = (min_fs / fs) if fs > 0.0 else float("inf")
+
+    passed = (fs >= min_fs) and (dcr <= 1.0)
+    return {
+        "pass": passed,
+        "factor_of_safety": round(fs, 4),
+        "dcr": round(dcr, 4),
+        "tau_resisting_psf": round(tau_resisting, 2),
+        "tau_driving_psf": round(tau_driving, 2),
+        "sigma_effective_psf": round(sigma_effective, 2),
+        "pore_pressure_psf": round(u_pore, 2),
+    }

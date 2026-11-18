@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_infinite_slope_stability,
     verify_asme_bpvc_vessel_thickness,
     verify_heat_exchanger_lmtd,
     verify_open_channel_hydraulic_jump,
@@ -3837,6 +3838,101 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_type["pass"])
         self.assertEqual(res_inv_type["reason"], "invalid_component_type")
+
+
+    def test_infinite_slope_stability(self) -> None:
+        from harness.verifiers import verify_infinite_slope_stability
+
+        # Standard dry cohesionless sand slope passing (FS = tan(phi) / tan(beta))
+        res_pass = verify_infinite_slope_stability(
+            slope_angle_deg=25.0,
+            depth_z_ft=10.0,
+            soil_cohesion_psf=0.0,
+            soil_friction_angle_deg=35.0,
+            soil_unit_weight_pcf=120.0,
+            min_fs=1.3,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["factor_of_safety"], 1.5016, places=3)
+        self.assertAlmostEqual(res_pass["dcr"], 1.3 / 1.5016, places=3)
+        self.assertEqual(res_pass["pore_pressure_psf"], 0.0)
+
+        # Steady seepage parallel to slope triggering slope failure
+        res_seepage_fail = verify_infinite_slope_stability(
+            slope_angle_deg=25.0,
+            depth_z_ft=10.0,
+            soil_cohesion_psf=0.0,
+            soil_friction_angle_deg=35.0,
+            soil_unit_weight_pcf=120.0,
+            water_table_height_ft=10.0,
+            sat_unit_weight_pcf=125.0,
+            min_fs=1.3,
+        )
+        self.assertFalse(res_seepage_fail["pass"])
+        self.assertLess(res_seepage_fail["factor_of_safety"], 1.0)
+        self.assertGreater(res_seepage_fail["dcr"], 1.0)
+        self.assertGreater(res_seepage_fail["pore_pressure_psf"], 500.0)
+
+        # Cohesion restoration stabilizing the saturated slope
+        res_cohesive_pass = verify_infinite_slope_stability(
+            slope_angle_deg=25.0,
+            depth_z_ft=10.0,
+            soil_cohesion_psf=300.0,
+            soil_friction_angle_deg=35.0,
+            soil_unit_weight_pcf=120.0,
+            water_table_height_ft=10.0,
+            sat_unit_weight_pcf=125.0,
+            min_fs=1.3,
+        )
+        self.assertTrue(res_cohesive_pass["pass"])
+        self.assertGreaterEqual(res_cohesive_pass["factor_of_safety"], 1.3)
+
+        # Pseudostatic earthquake coefficient reducing stability
+        res_seismic = verify_infinite_slope_stability(
+            slope_angle_deg=25.0,
+            depth_z_ft=10.0,
+            soil_cohesion_psf=0.0,
+            soil_friction_angle_deg=35.0,
+            soil_unit_weight_pcf=120.0,
+            seismic_coeff_kh=0.15,
+            min_fs=1.3,
+        )
+        self.assertFalse(res_seismic["pass"])
+        self.assertLess(res_seismic["factor_of_safety"], res_pass["factor_of_safety"])
+
+        # Water table exceeding failure depth error
+        res_hw_err = verify_infinite_slope_stability(
+            slope_angle_deg=25.0,
+            depth_z_ft=10.0,
+            soil_cohesion_psf=0.0,
+            soil_friction_angle_deg=35.0,
+            soil_unit_weight_pcf=120.0,
+            water_table_height_ft=15.0,
+        )
+        self.assertFalse(res_hw_err["pass"])
+        self.assertEqual(res_hw_err["reason"], "water_table_exceeds_depth")
+
+        # Invalid slope angle error
+        res_angle_err = verify_infinite_slope_stability(
+            slope_angle_deg=92.0,
+            depth_z_ft=10.0,
+            soil_cohesion_psf=0.0,
+            soil_friction_angle_deg=35.0,
+            soil_unit_weight_pcf=120.0,
+        )
+        self.assertFalse(res_angle_err["pass"])
+        self.assertEqual(res_angle_err["reason"], "invalid_slope_angle")
+
+        # NaN input validation
+        res_nan = verify_infinite_slope_stability(
+            slope_angle_deg=float("nan"),
+            depth_z_ft=10.0,
+            soil_cohesion_psf=0.0,
+            soil_friction_angle_deg=35.0,
+            soil_unit_weight_pcf=120.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
 
 
 if __name__ == "__main__":

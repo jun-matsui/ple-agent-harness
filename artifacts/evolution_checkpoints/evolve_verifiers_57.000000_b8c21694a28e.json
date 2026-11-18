@@ -1,0 +1,9 @@
+{
+  "score": 57.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_infinite_slope_stability",
+    "rationale": "Evaluates geotechnical/civil infinite slope stability under steady seepage and pseudostatic seismic loading using the effective stress Mohr-Coulomb failure criterion, a core Physical-Engineering Last Exam (PLE) competency.",
+    "model": "gemini-3.8-flash"
+  }
+}
