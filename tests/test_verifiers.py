@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_ashrae_fan_power_limitation,
     verify_nfpa14_standpipe_demand,
     verify_aashto_pavement_structural_number,
     verify_nec_dwelling_service_load,
@@ -4940,6 +4941,112 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_class["pass"])
         self.assertEqual(res_inv_class["reason"], "invalid_system_class")
+
+
+    def test_ashrae_fan_power_limitation(self) -> None:
+        from harness.verifiers import verify_ashrae_fan_power_limitation
+
+        # Standard passing VAV fan system under Nameplate HP compliance path (Option 1)
+        res_pass = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=10000.0,
+            motor_nameplate_hp=10.0,
+            fan_brake_horsepower=8.5,
+            system_type="vav",
+            compliance_path="nameplate_hp",
+            pressure_drop_credit_in_wg=0.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["system_type"], "vav")
+        self.assertEqual(res_pass["compliance_path"], "nameplate_hp")
+        self.assertAlmostEqual(res_pass["pressure_credit_hp"], 1.210, places=2)
+        self.assertAlmostEqual(res_pass["allowable_limit_hp"], 14.210, places=2)
+        self.assertAlmostEqual(res_pass["dcr"], 10.0 / 14.210, places=3)
+        self.assertTrue(res_pass["power_limit_ok"])
+        self.assertTrue(res_pass["motor_capacity_ok"])
+
+        # Passing Constant Volume system under Fan BHP compliance path (Option 2)
+        res_cv_bhp = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=8000.0,
+            motor_nameplate_hp=7.5,
+            fan_brake_horsepower=6.2,
+            system_type="constant_volume",
+            compliance_path="fan_bhp",
+            pressure_drop_credit_in_wg=0.2,
+        )
+        self.assertTrue(res_cv_bhp["pass"])
+        self.assertAlmostEqual(res_cv_bhp["allowable_limit_hp"], 8000.0 * 0.00082 + (8000.0 * 0.2 / 4131.0), places=2)
+        self.assertLess(res_cv_bhp["dcr"], 1.0)
+
+        # Automatic BHP calculation from duct static pressure and fan total efficiency
+        res_calc_bhp = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=12000.0,
+            motor_nameplate_hp=15.0,
+            duct_static_pressure_in_wg=4.0,
+            fan_efficiency_pct=65.0,
+            system_type="vav",
+            compliance_path="fan_bhp",
+        )
+        self.assertTrue(res_calc_bhp["pass"])
+        expected_bhp = (12000.0 * 4.0) / (6356.0 * 0.65)
+        self.assertAlmostEqual(res_calc_bhp["fan_bhp"], expected_bhp, places=2)
+        self.assertLessEqual(res_calc_bhp["fan_bhp"], 15.0)
+
+        # Exceeded allowable fan power limit failure (DCR > 1.0)
+        res_fail_power = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=10000.0,
+            motor_nameplate_hp=20.0,
+            fan_brake_horsepower=16.0,
+            system_type="vav",
+            compliance_path="nameplate_hp",
+        )
+        self.assertFalse(res_fail_power["pass"])
+        self.assertFalse(res_fail_power["power_limit_ok"])
+        self.assertGreater(res_fail_power["dcr"], 1.0)
+
+        # Motor undersized for fan brake horsepower failure (Motor HP < Fan BHP)
+        res_motor_fail = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=10000.0,
+            motor_nameplate_hp=10.0,
+            fan_brake_horsepower=12.0,
+            system_type="vav",
+            pressure_drop_credit_in_wg=1.0,
+        )
+        self.assertFalse(res_motor_fail["pass"])
+        self.assertFalse(res_motor_fail["motor_capacity_ok"])
+
+        # Missing fan BHP data error
+        res_no_bhp = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=10000.0,
+            motor_nameplate_hp=15.0,
+        )
+        self.assertFalse(res_no_bhp["pass"])
+        self.assertEqual(res_no_bhp["reason"], "missing_fan_bhp_or_pressure_efficiency")
+
+        # Input error validation checks
+        res_nan = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=float("nan"),
+            motor_nameplate_hp=10.0,
+            fan_brake_horsepower=8.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=-5000.0,
+            motor_nameplate_hp=10.0,
+            fan_brake_horsepower=8.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_airflow_or_motor_hp")
+
+        res_inv_sys = verify_ashrae_fan_power_limitation(
+            design_airflow_cfm=10000.0,
+            motor_nameplate_hp=10.0,
+            fan_brake_horsepower=8.0,
+            system_type="mixed_mode",
+        )
+        self.assertFalse(res_inv_sys["pass"])
+        self.assertEqual(res_inv_sys["reason"], "invalid_system_type")
 
 
 if __name__ == "__main__":

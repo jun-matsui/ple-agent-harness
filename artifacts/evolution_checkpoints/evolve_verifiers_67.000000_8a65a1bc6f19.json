@@ -1,0 +1,9 @@
+{
+  "score": 67.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ashrae_fan_power_limitation",
+    "rationale": "Implements ASHRAE 90.1 Section 6.5.3.1 Fan System Power Limitation and motor nameplate sizing checks for constant and variable volume systems, addressing a critical untested gap in mechanical HVAC compliance.",
+    "model": "gemini-3.8-flash"
+  }
+}

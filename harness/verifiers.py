@@ -4997,3 +4997,100 @@ def verify_nfpa14_standpipe_demand(
         "flow_ok": flow_ok,
         "pressure_ok": press_ok,
     }
+
+
+def verify_ashrae_fan_power_limitation(
+    design_airflow_cfm: float,
+    motor_nameplate_hp: float,
+    fan_brake_horsepower: float = 0.0,
+    system_type: str = "variable_volume",
+    compliance_path: str = "nameplate_hp",
+    pressure_drop_credit_in_wg: float = 0.0,
+    duct_static_pressure_in_wg: float = 0.0,
+    fan_efficiency_pct: float = 0.0,
+) -> Dict[str, Any]:
+    """ASHRAE 90.1 Section 6.5.3.1 Fan System Power Limitation and motor nameplate sizing gate."""
+    scalars = [
+        design_airflow_cfm,
+        motor_nameplate_hp,
+        fan_brake_horsepower,
+        pressure_drop_credit_in_wg,
+        duct_static_pressure_in_wg,
+        fan_efficiency_pct,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if design_airflow_cfm <= 0 or motor_nameplate_hp <= 0:
+        return {"pass": False, "reason": "non_positive_airflow_or_motor_hp"}
+    if pressure_drop_credit_in_wg < 0:
+        return {"pass": False, "reason": "negative_pressure_credit"}
+    if duct_static_pressure_in_wg < 0:
+        return {"pass": False, "reason": "negative_static_pressure"}
+    if fan_efficiency_pct < 0 or fan_efficiency_pct > 100.0:
+        return {"pass": False, "reason": "invalid_fan_efficiency"}
+
+    # Resolve Fan Brake Horsepower (BHP)
+    if fan_brake_horsepower > 0.0:
+        eff_bhp = fan_brake_horsepower
+    elif duct_static_pressure_in_wg > 0.0 and fan_efficiency_pct > 0.0:
+        # Air Horsepower AHP = (CFM * TSP) / 6356; BHP = AHP / (eta / 100)
+        eff_bhp = (design_airflow_cfm * duct_static_pressure_in_wg) / (
+            6356.0 * (fan_efficiency_pct / 100.0)
+        )
+    else:
+        return {"pass": False, "reason": "missing_fan_bhp_or_pressure_efficiency"}
+
+    sys_clean = system_type.strip().lower().replace(" ", "_")
+    type_map = {
+        "variable_volume": "vav",
+        "vav": "vav",
+        "constant_volume": "cv",
+        "cv": "cv",
+    }
+    if sys_clean not in type_map:
+        return {"pass": False, "reason": "invalid_system_type"}
+    norm_type = type_map[sys_clean]
+
+    path_clean = compliance_path.strip().lower().replace(" ", "_")
+    path_map = {
+        "nameplate_hp": "nameplate_hp",
+        "nameplate": "nameplate_hp",
+        "fan_bhp": "fan_bhp",
+        "bhp": "fan_bhp",
+    }
+    if path_clean not in path_map:
+        return {"pass": False, "reason": "invalid_compliance_path"}
+    norm_path = path_map[path_clean]
+
+    # ASHRAE 90.1 Table 6.5.3.1-1 Pressure drop adjustment credit A = (CFM * PD) / 4131
+    credit_a = (design_airflow_cfm * pressure_drop_credit_in_wg) / 4131.0
+
+    # Table 6.5.3.1-1 maximum allowable fan system power coefficients
+    if norm_path == "nameplate_hp":
+        coeff = 0.00130 if norm_type == "vav" else 0.00094
+        allowable_limit = (design_airflow_cfm * coeff) + credit_a
+        demand_val = motor_nameplate_hp
+    else:  # fan_bhp
+        coeff = 0.00110 if norm_type == "vav" else 0.00082
+        allowable_limit = (design_airflow_cfm * coeff) + credit_a
+        demand_val = eff_bhp
+
+    power_dcr = demand_val / allowable_limit if allowable_limit > 0 else float("inf")
+    power_limit_ok = power_dcr <= 1.0
+
+    # Motor continuous duty check: nameplate HP must equal or exceed fan BHP
+    motor_capacity_ok = motor_nameplate_hp >= eff_bhp
+    passed = power_limit_ok and motor_capacity_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(power_dcr, 4),
+        "allowable_limit_hp": round(allowable_limit, 3),
+        "fan_bhp": round(eff_bhp, 3),
+        "motor_nameplate_hp": round(motor_nameplate_hp, 2),
+        "pressure_credit_hp": round(credit_a, 3),
+        "compliance_path": norm_path,
+        "system_type": norm_type,
+        "power_limit_ok": power_limit_ok,
+        "motor_capacity_ok": motor_capacity_ok,
+    }
