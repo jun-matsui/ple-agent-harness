@@ -1,0 +1,9 @@
+{
+  "score": 35.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asce7_roof_snow_load",
+    "rationale": "Implements ASCE 7-16/7-22 Chapter 7 deterministic roof snow load checks (flat roof snow load pf, slope factor Cs for warm/cold/slippery roofs, and low-slope minimum snow load pm), completing the ASCE 7 structural loading trifecta alongside wind and seismic base shear.",
+    "model": "gemini-3.8-flash"
+  }
+}

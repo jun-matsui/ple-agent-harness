@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asce7_roof_snow_load,
     verify_aci_rebar_development_length,
     verify_aisc_column_base_plate,
     verify_hvac_cooling_load_capacity,
@@ -1809,6 +1810,92 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_bar["pass"])
         self.assertEqual(res_inv_bar["reason"], "invalid_bar_size")
+
+
+    def test_asce7_roof_snow_load(self) -> None:
+        from harness.verifiers import verify_asce7_roof_snow_load
+
+        # Flat roof governed by pf
+        res_pass = verify_asce7_roof_snow_load(
+            pg_psf=30.0,
+            roof_slope_deg=0.0,
+            p_capacity_psf=30.0,
+            ce_exposure_factor=1.0,
+            ct_thermal_factor=1.0,
+            importance_factor=1.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["pf_psf"], 21.0, places=1)
+        self.assertAlmostEqual(res_pass["p_design_psf"], 21.0, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 0.70, places=2)
+        self.assertEqual(res_pass["cs"], 1.0)
+        self.assertTrue(res_pass["is_low_slope"])
+
+        # Low ground snow load where minimum load pm governs
+        res_pm_gov = verify_asce7_roof_snow_load(
+            pg_psf=15.0,
+            roof_slope_deg=0.0,
+            p_capacity_psf=20.0,
+        )
+        self.assertTrue(res_pm_gov["pass"])
+        self.assertAlmostEqual(res_pm_gov["pf_psf"], 10.5, places=1)
+        self.assertAlmostEqual(res_pm_gov["pm_psf"], 15.0, places=1)
+        self.assertAlmostEqual(res_pm_gov["p_design_psf"], 15.0, places=1)
+        self.assertAlmostEqual(res_pm_gov["dcr"], 0.75, places=2)
+
+        # Sloped roof with slope reduction factor Cs
+        res_sloped = verify_asce7_roof_snow_load(
+            pg_psf=30.0,
+            roof_slope_deg=50.0,
+            p_capacity_psf=15.0,
+            is_slippery_surface=False,
+        )
+        self.assertTrue(res_sloped["pass"])
+        self.assertAlmostEqual(res_sloped["cs"], 0.50, places=2)
+        self.assertAlmostEqual(res_sloped["ps_psf"], 10.5, places=1)
+        self.assertAlmostEqual(res_sloped["p_design_psf"], 10.5, places=1)
+        self.assertFalse(res_sloped["is_low_slope"])
+
+        # Steep roof shedding snow completely (Cs = 0)
+        res_steep = verify_asce7_roof_snow_load(
+            pg_psf=40.0,
+            roof_slope_deg=75.0,
+            p_capacity_psf=10.0,
+        )
+        self.assertTrue(res_steep["pass"])
+        self.assertEqual(res_steep["cs"], 0.0)
+        self.assertEqual(res_steep["p_design_psf"], 0.0)
+
+        # Capacity exceeded failure
+        res_fail = verify_asce7_roof_snow_load(
+            pg_psf=50.0,
+            roof_slope_deg=0.0,
+            p_capacity_psf=25.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Input error validation
+        res_nan = verify_asce7_roof_snow_load(
+            pg_psf=float("nan"),
+            roof_slope_deg=10.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_asce7_roof_snow_load(
+            pg_psf=-20.0,
+            roof_slope_deg=10.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_loading_or_capacity")
+
+        res_inv_slope = verify_asce7_roof_snow_load(
+            pg_psf=30.0,
+            roof_slope_deg=105.0,
+        )
+        self.assertFalse(res_inv_slope["pass"])
+        self.assertEqual(res_inv_slope["reason"], "invalid_roof_slope")
 
 
 if __name__ == "__main__":

@@ -1929,3 +1929,79 @@ def verify_aci_rebar_development_length(
         "psi_s": round(psi_s, 2),
         "psi_g": round(psi_g, 2),
     }
+
+
+def verify_asce7_roof_snow_load(
+    pg_psf: float,
+    roof_slope_deg: float = 0.0,
+    p_capacity_psf: float = 30.0,
+    ce_exposure_factor: float = 1.0,
+    ct_thermal_factor: float = 1.0,
+    importance_factor: float = 1.0,
+    is_slippery_surface: bool = False,
+) -> Dict[str, Any]:
+    """ASCE 7-16/7-22 Chapter 7 design roof snow load, slope factor Cs, and minimum load gate."""
+    scalars = [
+        pg_psf,
+        roof_slope_deg,
+        p_capacity_psf,
+        ce_exposure_factor,
+        ct_thermal_factor,
+        importance_factor,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if min(pg_psf, p_capacity_psf, ce_exposure_factor, ct_thermal_factor, importance_factor) <= 0:
+        return {"pass": False, "reason": "non_positive_loading_or_capacity"}
+    if not (0.0 <= roof_slope_deg <= 90.0):
+        return {"pass": False, "reason": "invalid_roof_slope"}
+
+    # ASCE 7-16 Eq. 7.3-1 Flat roof snow load pf
+    pf_psf = 0.70 * ce_exposure_factor * ct_thermal_factor * importance_factor * pg_psf
+
+    # ASCE 7-16 Section 7.4 Roof slope factor Cs
+    # Determine threshold angle theta_1 based on thermal factor Ct and surface lubricity
+    if ct_thermal_factor <= 1.0:
+        theta_1 = 5.0 if is_slippery_surface else 30.0
+    elif ct_thermal_factor >= 1.2:
+        theta_1 = 15.0 if is_slippery_surface else 45.0
+    else:
+        # Linear interpolation for 1.0 < Ct < 1.2
+        frac = (ct_thermal_factor - 1.0) / 0.2
+        theta_1_slip = 5.0 + 10.0 * frac
+        theta_1_other = 30.0 + 15.0 * frac
+        theta_1 = theta_1_slip if is_slippery_surface else theta_1_other
+
+    theta_2 = 70.0
+    if roof_slope_deg <= theta_1:
+        cs = 1.0
+    elif roof_slope_deg >= theta_2:
+        cs = 0.0
+    else:
+        cs = 1.0 - ((roof_slope_deg - theta_1) / (theta_2 - theta_1))
+
+    # Sloped roof snow load ps
+    ps_psf = cs * pf_psf
+
+    # ASCE 7-16 Section 7.3.4 Minimum roof snow load pm for low-slope roofs (<= 15 deg)
+    is_low_slope = roof_slope_deg <= 15.0
+    if is_low_slope:
+        pm_psf = (importance_factor * pg_psf) if pg_psf <= 20.0 else (20.0 * importance_factor)
+        p_design_psf = max(ps_psf, pm_psf)
+    else:
+        pm_psf = 0.0
+        p_design_psf = ps_psf
+
+    dcr = p_design_psf / p_capacity_psf if p_capacity_psf > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "p_design_psf": round(p_design_psf, 2),
+        "pf_psf": round(pf_psf, 2),
+        "ps_psf": round(ps_psf, 2),
+        "pm_psf": round(pm_psf, 2),
+        "cs": round(cs, 4),
+        "is_low_slope": is_low_slope,
+    }
