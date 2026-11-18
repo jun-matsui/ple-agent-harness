@@ -1,0 +1,9 @@
+{
+  "score": 29.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_motor_branch_circuit",
+    "rationale": "Applies NEC Article 430 standards to verify motor branch circuit conductor sizing (125% FLA rule), short-circuit/ground-fault OCPD rating with Table 240.6(A) standard sizing rounding exceptions, and motor overload protection limits.",
+    "model": "gemini-3.8-flash"
+  }
+}

@@ -1430,3 +1430,89 @@ def verify_clay_consolidation_settlement(
         "consolidation_state": state,
         "sigma_final_psf": round(sigma_f, 2),
     }
+
+
+def verify_nec_motor_branch_circuit(
+    motor_fla_a: float,
+    conductor_ampacity_a: float,
+    ocpd_rating_a: float,
+    ocpd_type: str = "inverse_time_breaker",
+    overload_rating_a: float = 0.0,
+    service_factor: float = 1.15,
+    allow_next_standard_ocpd: bool = True,
+) -> Dict[str, Any]:
+    """NEC Article 430 motor branch circuit sizing check (conductor, OCPD, and overload protection)."""
+    scalars = [motor_fla_a, conductor_ampacity_a, ocpd_rating_a, service_factor, overload_rating_a]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if min(motor_fla_a, conductor_ampacity_a, ocpd_rating_a) <= 0:
+        return {"pass": False, "reason": "non_positive_current_or_ampacity"}
+    if overload_rating_a < 0:
+        return {"pass": False, "reason": "negative_overload_rating"}
+    if service_factor < 1.0:
+        return {"pass": False, "reason": "invalid_service_factor"}
+
+    # NEC Table 430.52 maximum rating or setting multipliers
+    ocpd_multipliers: Dict[str, float] = {
+        "inverse_time_breaker": 2.50,
+        "dual_element_fuse": 1.75,
+        "non_time_delay_fuse": 3.00,
+        "instantaneous_trip": 8.00,
+    }
+    type_key = ocpd_type.strip().lower()
+    if type_key not in ocpd_multipliers:
+        return {"pass": False, "reason": "invalid_ocpd_type"}
+
+    # NEC 430.22 branch circuit conductor sizing (125% of FLA for continuous duty)
+    min_conductor_ampacity_a = 1.25 * motor_fla_a
+    conductor_dcr = min_conductor_ampacity_a / conductor_ampacity_a
+    conductor_ok = conductor_ampacity_a >= min_conductor_ampacity_a
+
+    # NEC 430.52 branch circuit short-circuit and ground-fault protection
+    raw_max_ocpd_a = ocpd_multipliers[type_key] * motor_fla_a
+    standard_ratings = [
+        15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100,
+        110, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450,
+        500, 600, 700, 800, 1000, 1200,
+    ]
+
+    if allow_next_standard_ocpd:
+        # NEC 430.52(C)(1) Exception 1 next higher standard rating (NEC 240.6(A))
+        if raw_max_ocpd_a <= standard_ratings[0]:
+            max_allowed_ocpd_a = float(standard_ratings[0])
+        elif raw_max_ocpd_a >= standard_ratings[-1]:
+            max_allowed_ocpd_a = raw_max_ocpd_a
+        else:
+            max_allowed_ocpd_a = float(
+                next(r for r in standard_ratings if r >= (raw_max_ocpd_a - 1e-6))
+            )
+    else:
+        max_allowed_ocpd_a = raw_max_ocpd_a
+
+    ocpd_dcr = ocpd_rating_a / max_allowed_ocpd_a if max_allowed_ocpd_a > 0 else float("inf")
+    ocpd_ok = ocpd_rating_a <= max_allowed_ocpd_a
+
+    # NEC 430.32 separate motor overload protection sizing
+    if overload_rating_a > 0.0:
+        max_overload_factor = 1.25 if service_factor >= 1.15 else 1.15
+        max_overload_a = max_overload_factor * motor_fla_a
+        overload_dcr = overload_rating_a / max_overload_a if max_overload_a > 0 else float("inf")
+        overload_ok = overload_rating_a <= max_overload_a
+    else:
+        max_overload_a = None
+        overload_dcr = None
+        overload_ok = True
+
+    passed = conductor_ok and ocpd_ok and overload_ok
+    return {
+        "pass": passed,
+        "conductor_dcr": round(conductor_dcr, 4),
+        "ocpd_dcr": round(ocpd_dcr, 4),
+        "min_conductor_ampacity_a": round(min_conductor_ampacity_a, 2),
+        "max_allowed_ocpd_a": round(max_allowed_ocpd_a, 2),
+        "max_overload_a": round(max_overload_a, 2) if max_overload_a is not None else None,
+        "overload_dcr": round(overload_dcr, 4) if overload_dcr is not None else None,
+        "conductor_ok": conductor_ok,
+        "ocpd_ok": ocpd_ok,
+        "overload_ok": overload_ok,
+    }

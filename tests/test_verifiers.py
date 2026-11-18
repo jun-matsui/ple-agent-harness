@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_motor_branch_circuit,
     verify_clay_consolidation_settlement,
     verify_aisc_tension_member,
     verify_nec_conduit_fill,
@@ -1295,6 +1296,93 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_stress_increase")
+
+
+    def test_nec_motor_branch_circuit(self) -> None:
+        from harness.verifiers import verify_nec_motor_branch_circuit
+
+        res_pass = verify_nec_motor_branch_circuit(
+            motor_fla_a=14.0,
+            conductor_ampacity_a=25.0,
+            ocpd_rating_a=35.0,
+            ocpd_type="inverse_time_breaker",
+            overload_rating_a=16.0,
+            service_factor=1.15,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["min_conductor_ampacity_a"], 17.5)
+        self.assertEqual(res_pass["max_allowed_ocpd_a"], 35.0)
+        self.assertEqual(res_pass["max_overload_a"], 17.5)
+        self.assertLessEqual(res_pass["conductor_dcr"], 1.0)
+        self.assertLessEqual(res_pass["ocpd_dcr"], 1.0)
+        self.assertLessEqual(res_pass["overload_dcr"], 1.0)
+
+        res_next_size = verify_nec_motor_branch_circuit(
+            motor_fla_a=28.0,
+            conductor_ampacity_a=40.0,
+            ocpd_rating_a=50.0,
+            ocpd_type="dual_element_fuse",
+            allow_next_standard_ocpd=True,
+        )
+        self.assertTrue(res_next_size["pass"])
+        self.assertEqual(res_next_size["max_allowed_ocpd_a"], 50.0)
+        self.assertEqual(res_next_size["ocpd_dcr"], 1.0)
+
+        res_fail_conductor = verify_nec_motor_branch_circuit(
+            motor_fla_a=28.0,
+            conductor_ampacity_a=30.0,
+            ocpd_rating_a=70.0,
+            ocpd_type="inverse_time_breaker",
+        )
+        self.assertFalse(res_fail_conductor["pass"])
+        self.assertFalse(res_fail_conductor["conductor_ok"])
+        self.assertGreater(res_fail_conductor["conductor_dcr"], 1.0)
+
+        res_fail_ocpd = verify_nec_motor_branch_circuit(
+            motor_fla_a=14.0,
+            conductor_ampacity_a=25.0,
+            ocpd_rating_a=50.0,
+            ocpd_type="inverse_time_breaker",
+        )
+        self.assertFalse(res_fail_ocpd["pass"])
+        self.assertFalse(res_fail_ocpd["ocpd_ok"])
+        self.assertGreater(res_fail_ocpd["ocpd_dcr"], 1.0)
+
+        res_fail_overload = verify_nec_motor_branch_circuit(
+            motor_fla_a=14.0,
+            conductor_ampacity_a=25.0,
+            ocpd_rating_a=35.0,
+            overload_rating_a=19.0,
+            service_factor=1.15,
+        )
+        self.assertFalse(res_fail_overload["pass"])
+        self.assertFalse(res_fail_overload["overload_ok"])
+        self.assertGreater(res_fail_overload["overload_dcr"], 1.0)
+
+        res_nan = verify_nec_motor_branch_circuit(
+            motor_fla_a=float("nan"),
+            conductor_ampacity_a=25.0,
+            ocpd_rating_a=35.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_motor_branch_circuit(
+            motor_fla_a=-14.0,
+            conductor_ampacity_a=25.0,
+            ocpd_rating_a=35.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_current_or_ampacity")
+
+        res_inv_type = verify_nec_motor_branch_circuit(
+            motor_fla_a=14.0,
+            conductor_ampacity_a=25.0,
+            ocpd_rating_a=35.0,
+            ocpd_type="magnetic_only",
+        )
+        self.assertFalse(res_inv_type["pass"])
+        self.assertEqual(res_inv_type["reason"], "invalid_ocpd_type")
 
 
 if __name__ == "__main__":
