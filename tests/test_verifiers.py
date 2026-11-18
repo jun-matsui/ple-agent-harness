@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_fillet_weld,
     verify_nec_solar_busbar_interconnection,
     verify_asce7_wind_pressure,
     verify_pump_npsh,
@@ -943,6 +944,85 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_rating_or_current")
+
+
+    def test_aisc_fillet_weld(self) -> None:
+        from harness.verifiers import verify_aisc_fillet_weld
+
+        res_pass = verify_aisc_fillet_weld(
+            pu_kips=40.0,
+            leg_size_in=0.3125,
+            length_in=8.0,
+            f_exx_ksi=70.0,
+            base_metal_fu_ksi=65.0,
+            base_metal_t_in=0.50,
+            load_angle_deg=0.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertEqual(res_pass["governing_limit_state"], "weld_shear")
+        self.assertAlmostEqual(res_pass["phi_rn_weld_kips"], 55.68, places=1)
+        self.assertEqual(res_pass["beta"], 1.0)
+        self.assertEqual(res_pass["k_ds"], 1.0)
+
+        res_fail = verify_aisc_fillet_weld(
+            pu_kips=70.0,
+            leg_size_in=0.3125,
+            length_in=8.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        res_transverse = verify_aisc_fillet_weld(
+            pu_kips=70.0,
+            leg_size_in=0.3125,
+            length_in=8.0,
+            load_angle_deg=90.0,
+        )
+        self.assertTrue(res_transverse["pass"])
+        self.assertEqual(res_transverse["k_ds"], 1.5)
+        self.assertAlmostEqual(res_transverse["phi_rn_weld_kips"], 83.53, places=1)
+
+        res_base_gov = verify_aisc_fillet_weld(
+            pu_kips=30.0,
+            leg_size_in=0.3125,
+            length_in=8.0,
+            base_metal_t_in=0.15,
+        )
+        self.assertEqual(res_base_gov["governing_limit_state"], "base_metal_shear")
+        self.assertAlmostEqual(res_base_gov["phi_rn_base_kips"], 35.1, places=1)
+
+        res_long_weld = verify_aisc_fillet_weld(
+            pu_kips=100.0,
+            leg_size_in=0.25,
+            length_in=35.0,
+        )
+        self.assertEqual(res_long_weld["beta"], 0.92)
+
+        res_nan = verify_aisc_fillet_weld(
+            pu_kips=float("nan"),
+            leg_size_in=0.3125,
+            length_in=8.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_fillet_weld(
+            pu_kips=-10.0,
+            leg_size_in=0.3125,
+            length_in=8.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_inv_angle = verify_aisc_fillet_weld(
+            pu_kips=40.0,
+            leg_size_in=0.3125,
+            length_in=8.0,
+            load_angle_deg=105.0,
+        )
+        self.assertFalse(res_inv_angle["pass"])
+        self.assertEqual(res_inv_angle["reason"], "invalid_load_angle")
 
 
 if __name__ == "__main__":

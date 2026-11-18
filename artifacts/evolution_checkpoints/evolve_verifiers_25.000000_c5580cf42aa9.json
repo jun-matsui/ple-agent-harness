@@ -1,0 +1,9 @@
+{
+  "score": 25.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_fillet_weld",
+    "rationale": "AISC 360-16 Chapter J2 fillet weld strength with directional enhancement (Eq. J2-5), long-weld reduction factor beta (Section J2.2b), and base metal shear rupture (Section J4.2) is a core structural steel engineering gate tested heavily on the PLE.",
+    "model": "gemini-3.8-flash"
+  }
+}

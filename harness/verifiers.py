@@ -1146,3 +1146,79 @@ def verify_nec_solar_busbar_interconnection(
         "min_required_pv_breaker_a": round(min_required_pv_ocpd, 2),
         "opposite_end": opposite_end,
     }
+
+
+def verify_aisc_fillet_weld(
+    pu_kips: float,
+    leg_size_in: float,
+    length_in: float,
+    f_exx_ksi: float = 70.0,
+    base_metal_fu_ksi: float = 65.0,
+    base_metal_t_in: float = 0.50,
+    load_angle_deg: float = 0.0,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """AISC 360-16 Section J2.4 & J4 LRFD fillet weld shear capacity and base metal rupture check."""
+    inputs = [
+        pu_kips,
+        leg_size_in,
+        length_in,
+        f_exx_ksi,
+        base_metal_fu_ksi,
+        base_metal_t_in,
+        load_angle_deg,
+        phi,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if pu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(leg_size_in, length_in, f_exx_ksi, base_metal_fu_ksi, base_metal_t_in, phi)
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if not (0.0 <= load_angle_deg <= 90.0):
+        return {"pass": False, "reason": "invalid_load_angle"}
+
+    # AISC 360-16 Section J2.2b end-loaded long fillet weld reduction factor beta
+    length_to_leg = length_in / leg_size_in
+    if length_to_leg <= 100.0:
+        beta = 1.0
+    elif length_to_leg <= 300.0:
+        beta = 1.2 - 0.002 * length_to_leg
+    else:
+        beta = 0.60
+
+    # AISC 360-16 Section J2.4 Eq. J2-5 directional strength enhancement factor
+    theta_rad = math.radians(load_angle_deg)
+    k_ds = 1.0 + 0.50 * (math.sin(theta_rad) ** 1.5)
+
+    # Effective throat thickness for standard 90-degree fillet weld
+    throat_in = 0.707107 * leg_size_in
+    a_we_in2 = throat_in * length_in
+
+    # Nominal and design weld shear strength
+    f_nw_ksi = 0.60 * f_exx_ksi * k_ds
+    rn_weld_kips = beta * f_nw_ksi * a_we_in2
+    phi_rn_weld_kips = phi * rn_weld_kips
+
+    # AISC 360-16 Section J4.2 base metal shear rupture strength
+    rn_base_kips = 0.60 * base_metal_fu_ksi * base_metal_t_in * length_in
+    phi_rn_base_kips = phi * rn_base_kips
+
+    phi_rn_gov_kips = min(phi_rn_weld_kips, phi_rn_base_kips)
+    limit_state = "weld_shear" if phi_rn_weld_kips <= phi_rn_base_kips else "base_metal_shear"
+    dcr = pu_kips / phi_rn_gov_kips if phi_rn_gov_kips > 0 else float("inf")
+
+    passed = dcr <= 1.0
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_rn_kips": round(phi_rn_gov_kips, 2),
+        "phi_rn_weld_kips": round(phi_rn_weld_kips, 2),
+        "phi_rn_base_kips": round(phi_rn_base_kips, 2),
+        "beta": round(beta, 4),
+        "k_ds": round(k_ds, 4),
+        "governing_limit_state": limit_state,
+    }
