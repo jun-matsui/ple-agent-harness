@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_dwelling_service_load,
     verify_ashrae_expansion_tank_sizing,
     verify_cooling_tower_performance,
     verify_nfpa92_stairwell_pressurization,
@@ -4643,6 +4644,111 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_volume_or_pressure")
+
+
+    def test_nec_dwelling_service_load(self) -> None:
+        from harness.verifiers import verify_nec_dwelling_service_load
+
+        # Standard passing 2400 sqft dwelling on a 150A service with heating governing
+        res_pass = verify_nec_dwelling_service_load(
+            service_rating_a=150.0,
+            dwelling_area_sqft=2400.0,
+            appliance_ratings_va=[1200.0, 4500.0],
+            cooking_appliances_va=9000.0,
+            clothes_dryer_va=5000.0,
+            ac_cooling_va=6000.0,
+            electric_heating_va=10000.0,
+            heating_demand_factor=0.65,
+            small_appliance_branch_circuits=2,
+            laundry_branch_circuits=1,
+            service_voltage_v=240.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["general_connected_va"], 31400.0)
+        self.assertEqual(res_pass["general_demand_va"], 18560.0)
+        self.assertEqual(res_pass["hvac_demand_va"], 6500.0)
+        self.assertEqual(res_pass["governing_hvac"], "heating")
+        self.assertAlmostEqual(res_pass["total_demand_va"], 25060.0, places=1)
+        self.assertAlmostEqual(res_pass["calculated_current_a"], 104.42, places=2)
+        self.assertAlmostEqual(res_pass["dcr"], 104.4167 / 150.0, places=4)
+        self.assertTrue(res_pass["capacity_ok"])
+        self.assertTrue(res_pass["service_size_ok"])
+
+        # Cooling governing test (cooling > derated heating)
+        res_cooling = verify_nec_dwelling_service_load(
+            service_rating_a=150.0,
+            dwelling_area_sqft=2400.0,
+            appliance_ratings_va=[1200.0, 4500.0],
+            cooking_appliances_va=9000.0,
+            clothes_dryer_va=5000.0,
+            ac_cooling_va=8000.0,
+            electric_heating_va=10000.0,
+            heating_demand_factor=0.65,
+        )
+        self.assertTrue(res_cooling["pass"])
+        self.assertEqual(res_cooling["governing_hvac"], "cooling")
+        self.assertEqual(res_cooling["hvac_demand_va"], 8000.0)
+
+        # Undersized service capacity failure (100A service overloaded)
+        res_fail_cap = verify_nec_dwelling_service_load(
+            service_rating_a=100.0,
+            dwelling_area_sqft=2400.0,
+            appliance_ratings_va=[1200.0, 4500.0],
+            cooking_appliances_va=9000.0,
+            clothes_dryer_va=5000.0,
+            ac_cooling_va=6000.0,
+            electric_heating_va=10000.0,
+            heating_demand_factor=0.65,
+        )
+        self.assertFalse(res_fail_cap["pass"])
+        self.assertFalse(res_fail_cap["capacity_ok"])
+        self.assertGreater(res_fail_cap["dcr"], 1.0)
+
+        # Code minimum service disconnect rating violation (NEC 230.79 requires >= 100A)
+        res_fail_size = verify_nec_dwelling_service_load(
+            service_rating_a=60.0,
+            dwelling_area_sqft=1000.0,
+            appliance_ratings_va=[],
+            min_service_rating_a=100.0,
+        )
+        self.assertFalse(res_fail_size["pass"])
+        self.assertFalse(res_fail_size["service_size_ok"])
+
+        # Insufficient small-appliance branch circuits error (NEC 210.11 requires min 2)
+        res_circ_err = verify_nec_dwelling_service_load(
+            service_rating_a=200.0,
+            dwelling_area_sqft=1800.0,
+            appliance_ratings_va=[],
+            small_appliance_branch_circuits=1,
+        )
+        self.assertFalse(res_circ_err["pass"])
+        self.assertEqual(res_circ_err["reason"], "insufficient_small_appliance_circuits")
+
+        # Input error validation checks
+        res_nan = verify_nec_dwelling_service_load(
+            service_rating_a=float("nan"),
+            dwelling_area_sqft=2000.0,
+            appliance_ratings_va=[],
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_dwelling_service_load(
+            service_rating_a=200.0,
+            dwelling_area_sqft=-1000.0,
+            appliance_ratings_va=[],
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_rating")
+
+        res_inv_factor = verify_nec_dwelling_service_load(
+            service_rating_a=200.0,
+            dwelling_area_sqft=1800.0,
+            appliance_ratings_va=[],
+            heating_demand_factor=1.25,
+        )
+        self.assertFalse(res_inv_factor["pass"])
+        self.assertEqual(res_inv_factor["reason"], "invalid_heating_demand_factor")
 
 
 if __name__ == "__main__":

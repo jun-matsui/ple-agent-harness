@@ -1,0 +1,9 @@
+{
+  "score": 64.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_dwelling_service_load",
+    "rationale": "Implements the NEC 220.82 Optional Calculation for Single-Family Dwelling Unit service sizing (general lighting, small appliance/laundry circuits, fastened appliances with 10 kVA threshold at 100% / 40% remainder, non-coincident HVAC selection, and NEC 230.79 minimum 100A service rating check), addressing a high-frequency gap on electrical engineering and plan review exams.",
+    "model": "gemini-3.8-flash"
+  }
+}

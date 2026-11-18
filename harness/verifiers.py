@@ -4647,3 +4647,110 @@ def verify_ashrae_expansion_tank_sizing(
         "volume_ok": vol_ok,
         "acceptance_ok": acceptance_ok,
     }
+
+
+def verify_nec_dwelling_service_load(
+    service_rating_a: float,
+    dwelling_area_sqft: float,
+    appliance_ratings_va: Sequence[float],
+    cooking_appliances_va: float = 0.0,
+    clothes_dryer_va: float = 0.0,
+    ac_cooling_va: float = 0.0,
+    electric_heating_va: float = 0.0,
+    small_appliance_branch_circuits: int = 2,
+    laundry_branch_circuits: int = 1,
+    service_voltage_v: float = 240.0,
+    heating_demand_factor: float = 1.0,
+    min_service_rating_a: float = 100.0,
+) -> Dict[str, Any]:
+    """NEC Article 220.82 Optional Method single-family dwelling service load calculation and service rating gate."""
+    scalars = [
+        service_rating_a,
+        dwelling_area_sqft,
+        cooking_appliances_va,
+        clothes_dryer_va,
+        ac_cooling_va,
+        electric_heating_va,
+        float(small_appliance_branch_circuits),
+        float(laundry_branch_circuits),
+        service_voltage_v,
+        heating_demand_factor,
+        min_service_rating_a,
+    ]
+    if any(math.isnan(val) for val in scalars) or any(math.isnan(a) for a in appliance_ratings_va):
+        return {"pass": False, "reason": "nan_input"}
+    if min(service_rating_a, dwelling_area_sqft, service_voltage_v, min_service_rating_a) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_rating"}
+    if (
+        cooking_appliances_va < 0
+        or clothes_dryer_va < 0
+        or ac_cooling_va < 0
+        or electric_heating_va < 0
+        or any(a < 0 for a in appliance_ratings_va)
+    ):
+        return {"pass": False, "reason": "negative_load_input"}
+    if small_appliance_branch_circuits < 2:
+        return {"pass": False, "reason": "insufficient_small_appliance_circuits"}
+    if laundry_branch_circuits < 0:
+        return {"pass": False, "reason": "negative_circuit_count"}
+    if not (0.0 < heating_demand_factor <= 1.0):
+        return {"pass": False, "reason": "invalid_heating_demand_factor"}
+
+    # NEC 220.82(B) General Loads
+    # 3 VA/sqft general lighting + receptacles (220.82(B)(1))
+    general_lighting_va = 3.0 * dwelling_area_sqft
+    # 1500 VA for each small-appliance and laundry circuit (220.82(B)(2))
+    small_appl_va = 1500.0 * small_appliance_branch_circuits
+    laundry_va = 1500.0 * laundry_branch_circuits
+    fixed_appl_va = sum(appliance_ratings_va)
+
+    va_gen_connected = (
+        general_lighting_va
+        + small_appl_va
+        + laundry_va
+        + fixed_appl_va
+        + cooking_appliances_va
+        + clothes_dryer_va
+    )
+
+    # 100% of first 10 kVA, 40% of remainder
+    if va_gen_connected <= 10000.0:
+        va_gen_demand = va_gen_connected
+    else:
+        va_gen_demand = 10000.0 + 0.40 * (va_gen_connected - 10000.0)
+
+    # NEC 220.82(C) HVAC Loads (largest of non-coincident cooling vs heating)
+    cooling_va = ac_cooling_va
+    heating_va = electric_heating_va * heating_demand_factor
+
+    if cooling_va == 0.0 and heating_va == 0.0:
+        va_hvac_demand = 0.0
+        gov_hvac = "none"
+    elif cooling_va >= heating_va:
+        va_hvac_demand = cooling_va
+        gov_hvac = "cooling"
+    else:
+        va_hvac_demand = heating_va
+        gov_hvac = "heating"
+
+    va_total = va_gen_demand + va_hvac_demand
+    i_calc = va_total / service_voltage_v
+    dcr = i_calc / service_rating_a
+
+    # NEC 230.79(C) minimum 100A service rating for single-family dwelling
+    service_size_ok = service_rating_a >= min_service_rating_a
+    capacity_ok = dcr <= 1.0
+    passed = capacity_ok and service_size_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "calculated_current_a": round(i_calc, 2),
+        "total_demand_va": round(va_total, 2),
+        "general_connected_va": round(va_gen_connected, 2),
+        "general_demand_va": round(va_gen_demand, 2),
+        "hvac_demand_va": round(va_hvac_demand, 2),
+        "governing_hvac": gov_hvac,
+        "capacity_ok": capacity_ok,
+        "service_size_ok": service_size_ok,
+    }
