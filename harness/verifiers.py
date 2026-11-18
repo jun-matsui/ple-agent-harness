@@ -3993,3 +3993,111 @@ def verify_infinite_slope_stability(
         "sigma_effective_psf": round(sigma_effective, 2),
         "pore_pressure_psf": round(u_pore, 2),
     }
+
+
+def verify_water_hammer_surge(
+    pipe_inner_diameter_in: float,
+    wall_thickness_in: float,
+    pipe_length_ft: float,
+    valve_closure_time_s: float,
+    static_pressure_psi: float,
+    pipe_pressure_rating_psi: float,
+    flow_velocity_fps: float = 0.0,
+    flow_rate_gpm: float = 0.0,
+    pipe_modulus_psi: float = 400000.0,
+    fluid_bulk_modulus_psi: float = 300000.0,
+    fluid_density_pcf: float = 62.4,
+    surge_allowance_pct: float = 50.0,
+    g_fps2: float = 32.174,
+) -> Dict[str, Any]:
+    """Joukowsky transient fluid water hammer surge pressure, acoustic wave speed, and pipe pressure rating check."""
+    scalars = [
+        pipe_inner_diameter_in,
+        wall_thickness_in,
+        pipe_length_ft,
+        valve_closure_time_s,
+        static_pressure_psi,
+        pipe_pressure_rating_psi,
+        flow_velocity_fps,
+        flow_rate_gpm,
+        pipe_modulus_psi,
+        fluid_bulk_modulus_psi,
+        fluid_density_pcf,
+        surge_allowance_pct,
+        g_fps2,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            pipe_inner_diameter_in,
+            wall_thickness_in,
+            pipe_length_ft,
+            pipe_pressure_rating_psi,
+            pipe_modulus_psi,
+            fluid_bulk_modulus_psi,
+            fluid_density_pcf,
+            g_fps2,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if valve_closure_time_s <= 0:
+        return {"pass": False, "reason": "non_positive_closure_time"}
+    if static_pressure_psi < 0:
+        return {"pass": False, "reason": "negative_static_pressure"}
+    if surge_allowance_pct < 0:
+        return {"pass": False, "reason": "negative_surge_allowance"}
+    if flow_velocity_fps < 0 or flow_rate_gpm < 0:
+        return {"pass": False, "reason": "negative_flow_input"}
+
+    # Resolve flow velocity
+    if flow_velocity_fps > 0.0:
+        v = flow_velocity_fps
+    elif flow_rate_gpm > 0.0:
+        area_ft2 = (math.pi * ((pipe_inner_diameter_in / 12.0) ** 2)) / 4.0
+        v = (flow_rate_gpm / 448.831169) / area_ft2
+    else:
+        return {"pass": False, "reason": "zero_flow_input"}
+
+    # Unconfined acoustic wave speed in fluid a0 = sqrt(Kf / rho)
+    rho = fluid_density_pcf / g_fps2
+    k_psf = fluid_bulk_modulus_psi * 144.0
+    a0 = math.sqrt(k_psf / rho)
+
+    # Conduit elastic constraint effect: a = a0 / sqrt(1 + (Kf / E) * (D / t))
+    elastic_term = 1.0 + (fluid_bulk_modulus_psi / pipe_modulus_psi) * (pipe_inner_diameter_in / wall_thickness_in)
+    a = a0 / math.sqrt(elastic_term)
+
+    # Critical closure time Tc = 2 * L / a
+    t_c = (2.0 * pipe_length_ft) / a
+    is_rapid = valve_closure_time_s <= t_c
+
+    # Joukowsky maximum potential surge delta_P = rho * a * delta_V
+    delta_p_joukowsky_psi = (fluid_density_pcf * a * v) / (144.0 * g_fps2)
+
+    if is_rapid:
+        closure_regime = "rapid"
+        delta_p_surge_psi = delta_p_joukowsky_psi
+    else:
+        closure_regime = "slow"
+        delta_p_surge_psi = delta_p_joukowsky_psi * (t_c / valve_closure_time_s)
+
+    total_max_pressure_psi = static_pressure_psi + delta_p_surge_psi
+    p_allowable_psi = pipe_pressure_rating_psi * (1.0 + surge_allowance_pct / 100.0)
+
+    dcr = total_max_pressure_psi / p_allowable_psi if p_allowable_psi > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "total_pressure_psi": round(total_max_pressure_psi, 2),
+        "surge_pressure_psi": round(delta_p_surge_psi, 2),
+        "joukowsky_surge_psi": round(delta_p_joukowsky_psi, 2),
+        "allowable_pressure_psi": round(p_allowable_psi, 2),
+        "wave_speed_fps": round(a, 2),
+        "critical_time_s": round(t_c, 4),
+        "closure_regime": closure_regime,
+        "flow_velocity_fps": round(v, 3),
+    }

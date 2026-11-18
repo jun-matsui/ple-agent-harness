@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_water_hammer_surge,
     verify_infinite_slope_stability,
     verify_asme_bpvc_vessel_thickness,
     verify_heat_exchanger_lmtd,
@@ -3933,6 +3934,110 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_nan["pass"])
         self.assertEqual(res_nan["reason"], "nan_input")
+
+
+    def test_water_hammer_surge(self) -> None:
+        from harness.verifiers import verify_water_hammer_surge
+
+        # Standard passing rapid closure in PVC pipeline (AWWA C900)
+        res_pass = verify_water_hammer_surge(
+            pipe_inner_diameter_in=6.0,
+            wall_thickness_in=0.30,
+            pipe_length_ft=2000.0,
+            valve_closure_time_s=1.0,
+            static_pressure_psi=60.0,
+            pipe_pressure_rating_psi=150.0,
+            flow_velocity_fps=5.0,
+            pipe_modulus_psi=400000.0,
+            surge_allowance_pct=50.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["closure_regime"], "rapid")
+        self.assertAlmostEqual(res_pass["wave_speed_fps"], 1179.88, places=1)
+        self.assertAlmostEqual(res_pass["critical_time_s"], 3.3902, places=2)
+        self.assertAlmostEqual(res_pass["surge_pressure_psi"], 79.46, places=1)
+        self.assertAlmostEqual(res_pass["total_pressure_psi"], 139.46, places=1)
+        self.assertEqual(res_pass["allowable_pressure_psi"], 225.0)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Slow closure condition with attenuated surge pressure (Tc < tv)
+        res_slow = verify_water_hammer_surge(
+            pipe_inner_diameter_in=6.0,
+            wall_thickness_in=0.30,
+            pipe_length_ft=2000.0,
+            valve_closure_time_s=10.0,
+            static_pressure_psi=60.0,
+            pipe_pressure_rating_psi=150.0,
+            flow_velocity_fps=5.0,
+            pipe_modulus_psi=400000.0,
+        )
+        self.assertTrue(res_slow["pass"])
+        self.assertEqual(res_slow["closure_regime"], "slow")
+        self.assertAlmostEqual(res_slow["surge_pressure_psi"], 26.94, places=1)
+        self.assertLess(res_slow["total_pressure_psi"], res_pass["total_pressure_psi"])
+
+        # Flow specified via flow rate GPM
+        res_gpm = verify_water_hammer_surge(
+            pipe_inner_diameter_in=6.0,
+            wall_thickness_in=0.30,
+            pipe_length_ft=2000.0,
+            valve_closure_time_s=1.0,
+            static_pressure_psi=60.0,
+            pipe_pressure_rating_psi=150.0,
+            flow_rate_gpm=440.0,
+        )
+        self.assertTrue(res_gpm["pass"])
+        self.assertAlmostEqual(res_gpm["flow_velocity_fps"], 4.99, places=1)
+
+        # Capacity exceeded failure (high static pressure with no surge allowance)
+        res_fail = verify_water_hammer_surge(
+            pipe_inner_diameter_in=6.0,
+            wall_thickness_in=0.30,
+            pipe_length_ft=2000.0,
+            valve_closure_time_s=1.0,
+            static_pressure_psi=100.0,
+            pipe_pressure_rating_psi=150.0,
+            flow_velocity_fps=5.0,
+            surge_allowance_pct=0.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_water_hammer_surge(
+            pipe_inner_diameter_in=float("nan"),
+            wall_thickness_in=0.30,
+            pipe_length_ft=2000.0,
+            valve_closure_time_s=1.0,
+            static_pressure_psi=60.0,
+            pipe_pressure_rating_psi=150.0,
+            flow_velocity_fps=5.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_water_hammer_surge(
+            pipe_inner_diameter_in=6.0,
+            wall_thickness_in=0.30,
+            pipe_length_ft=2000.0,
+            valve_closure_time_s=-1.0,
+            static_pressure_psi=60.0,
+            pipe_pressure_rating_psi=150.0,
+            flow_velocity_fps=5.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_closure_time")
+
+        res_no_flow = verify_water_hammer_surge(
+            pipe_inner_diameter_in=6.0,
+            wall_thickness_in=0.30,
+            pipe_length_ft=2000.0,
+            valve_closure_time_s=1.0,
+            static_pressure_psi=60.0,
+            pipe_pressure_rating_psi=150.0,
+        )
+        self.assertFalse(res_no_flow["pass"])
+        self.assertEqual(res_no_flow["reason"], "zero_flow_input")
 
 
 if __name__ == "__main__":

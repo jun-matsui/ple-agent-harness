@@ -1,0 +1,9 @@
+{
+  "score": 58.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_water_hammer_surge",
+    "rationale": "Evaluates fluid transient hydraulic water hammer, acoustic wave speed in elastic conduit, Joukowsky rapid/slow valve closure surge pressure, and AWWA/ASME pipe working-plus-transient pressure rating.",
+    "model": "gemini-3.8-flash"
+  }
+}
