@@ -4101,3 +4101,127 @@ def verify_water_hammer_surge(
         "closure_regime": closure_regime,
         "flow_velocity_fps": round(v, 3),
     }
+
+
+def verify_weir_discharge_capacity(
+    head_ft: float,
+    crest_length_ft: float = 0.0,
+    weir_type: str = "suppressed_rectangular",
+    required_discharge_cfs: float = 0.0,
+    notch_angle_deg: float = 90.0,
+    crest_height_ft: float = 0.0,
+    tailwater_head_ft: float = 0.0,
+    broad_crest_breadth_ft: float = 0.0,
+    freeboard_ft: float = 0.0,
+    min_freeboard_ft: float = 0.0,
+) -> Dict[str, Any]:
+    """Civil/Water Resources sharp- and broad-crested weir discharge capacity and Villemonte submergence gate."""
+    scalars = [
+        head_ft,
+        crest_length_ft,
+        required_discharge_cfs,
+        notch_angle_deg,
+        crest_height_ft,
+        tailwater_head_ft,
+        broad_crest_breadth_ft,
+        freeboard_ft,
+        min_freeboard_ft,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if head_ft <= 0:
+        return {"pass": False, "reason": "non_positive_head"}
+    if required_discharge_cfs < 0:
+        return {"pass": False, "reason": "negative_required_flow"}
+    if crest_height_ft < 0:
+        return {"pass": False, "reason": "negative_crest_height"}
+    if tailwater_head_ft < 0:
+        return {"pass": False, "reason": "negative_tailwater_head"}
+    if tailwater_head_ft >= head_ft:
+        return {"pass": False, "reason": "tailwater_drowns_weir"}
+    if freeboard_ft < 0 or min_freeboard_ft < 0:
+        return {"pass": False, "reason": "negative_freeboard"}
+    if broad_crest_breadth_ft < 0:
+        return {"pass": False, "reason": "negative_breadth"}
+
+    w_type = weir_type.strip().lower().replace("-", "_")
+    valid_types = {
+        "suppressed_rectangular",
+        "contracted_rectangular",
+        "v_notch",
+        "cipolletti",
+        "broad_crested",
+    }
+    if w_type not in valid_types:
+        return {"pass": False, "reason": "invalid_weir_type"}
+
+    if w_type in ("suppressed_rectangular", "contracted_rectangular", "cipolletti", "broad_crested"):
+        if crest_length_ft <= 0:
+            return {"pass": False, "reason": "non_positive_crest_length"}
+
+    if w_type == "v_notch":
+        if not (10.0 <= notch_angle_deg <= 150.0):
+            return {"pass": False, "reason": "invalid_notch_angle"}
+
+    g = 32.174
+    # Unsubmerged ideal discharge calculation
+    if w_type == "suppressed_rectangular":
+        q_free = 3.33 * crest_length_ft * (head_ft ** 1.5)
+        n_sub_exp = 1.5
+        l_effective = crest_length_ft
+    elif w_type == "contracted_rectangular":
+        # Francis formula accounting for two end contractions
+        l_effective = crest_length_ft - 0.20 * head_ft
+        if l_effective <= 0:
+            return {"pass": False, "reason": "head_exceeds_allowable_contraction"}
+        q_free = 3.33 * l_effective * (head_ft ** 1.5)
+        n_sub_exp = 1.5
+    elif w_type == "v_notch":
+        theta_rad = math.radians(notch_angle_deg)
+        cd_v = 0.585
+        q_free = (8.0 / 15.0) * cd_v * math.sqrt(2.0 * g) * math.tan(theta_rad / 2.0) * (head_ft ** 2.5)
+        n_sub_exp = 2.5
+        l_effective = 2.0 * head_ft * math.tan(theta_rad / 2.0)
+    elif w_type == "cipolletti":
+        # 4:1 side slope trapezoidal weir compensating for end contractions
+        q_free = 3.367 * crest_length_ft * (head_ft ** 1.5)
+        n_sub_exp = 1.5
+        l_effective = crest_length_ft
+    else:  # broad_crested
+        c_bc = 0.385 * math.sqrt(2.0 * g)
+        q_free = c_bc * crest_length_ft * (head_ft ** 1.5)
+        n_sub_exp = 1.5
+        l_effective = crest_length_ft
+
+    # Villemonte submergence reduction factor
+    if tailwater_head_ft > 0.0:
+        s_ratio = tailwater_head_ft / head_ft
+        k_sub = (1.0 - (s_ratio ** n_sub_exp)) ** 0.385
+        q_capacity_cfs = q_free * max(k_sub, 0.0)
+        is_submerged = True
+    else:
+        k_sub = 1.0
+        q_capacity_cfs = q_free
+        is_submerged = False
+
+    if required_discharge_cfs > 0.0:
+        dcr = required_discharge_cfs / q_capacity_cfs if q_capacity_cfs > 0 else float("inf")
+        capacity_ok = dcr <= 1.0
+    else:
+        dcr = 0.0
+        capacity_ok = q_capacity_cfs > 0.0
+
+    freeboard_ok = (freeboard_ft >= min_freeboard_ft) if min_freeboard_ft > 0.0 else True
+    passed = capacity_ok and freeboard_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "q_capacity_cfs": round(q_capacity_cfs, 3),
+        "q_unsubmerged_cfs": round(q_free, 3),
+        "submergence_factor": round(k_sub, 4),
+        "effective_length_ft": round(l_effective, 3),
+        "is_submerged": is_submerged,
+        "capacity_ok": capacity_ok,
+        "freeboard_ok": freeboard_ok,
+    }

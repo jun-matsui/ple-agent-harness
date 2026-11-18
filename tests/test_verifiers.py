@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_weir_discharge_capacity,
     verify_water_hammer_surge,
     verify_infinite_slope_stability,
     verify_asme_bpvc_vessel_thickness,
@@ -4038,6 +4039,131 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_no_flow["pass"])
         self.assertEqual(res_no_flow["reason"], "zero_flow_input")
+
+
+    def test_weir_discharge_capacity(self) -> None:
+        from harness.verifiers import verify_weir_discharge_capacity
+
+        # Standard suppressed rectangular weir passing
+        res_supp = verify_weir_discharge_capacity(
+            head_ft=1.5,
+            crest_length_ft=10.0,
+            weir_type="suppressed_rectangular",
+            required_discharge_cfs=50.0,
+            freeboard_ft=1.5,
+            min_freeboard_ft=1.0,
+        )
+        self.assertTrue(res_supp["pass"])
+        self.assertAlmostEqual(res_supp["q_capacity_cfs"], 61.176, places=1)
+        self.assertAlmostEqual(res_supp["dcr"], 50.0 / 61.176, places=3)
+        self.assertFalse(res_supp["is_submerged"])
+        self.assertTrue(res_supp["freeboard_ok"])
+
+        # Contracted rectangular weir with end contraction deduction
+        res_cont = verify_weir_discharge_capacity(
+            head_ft=1.0,
+            crest_length_ft=10.0,
+            weir_type="contracted_rectangular",
+            required_discharge_cfs=30.0,
+        )
+        self.assertTrue(res_cont["pass"])
+        self.assertEqual(res_cont["effective_length_ft"], 9.8)
+        self.assertAlmostEqual(res_cont["q_capacity_cfs"], 3.33 * 9.8, places=2)
+
+        # 90-degree V-notch weir
+        res_vnotch = verify_weir_discharge_capacity(
+            head_ft=1.2,
+            weir_type="v_notch",
+            notch_angle_deg=90.0,
+            required_discharge_cfs=3.5,
+        )
+        self.assertTrue(res_vnotch["pass"])
+        self.assertAlmostEqual(res_vnotch["q_capacity_cfs"], 3.948, places=1)
+        self.assertLess(res_vnotch["dcr"], 1.0)
+
+        # Cipolletti weir check
+        res_cipo = verify_weir_discharge_capacity(
+            head_ft=1.0,
+            crest_length_ft=6.0,
+            weir_type="cipolletti",
+            required_discharge_cfs=18.0,
+        )
+        self.assertTrue(res_cipo["pass"])
+        self.assertAlmostEqual(res_cipo["q_capacity_cfs"], 20.202, places=2)
+
+        # Broad-crested weir check
+        res_bcw = verify_weir_discharge_capacity(
+            head_ft=1.0,
+            crest_length_ft=8.0,
+            weir_type="broad_crested",
+            required_discharge_cfs=20.0,
+        )
+        self.assertTrue(res_bcw["pass"])
+        self.assertAlmostEqual(res_bcw["q_capacity_cfs"], 24.698, places=1)
+
+        # Villemonte submerged flow check
+        res_sub = verify_weir_discharge_capacity(
+            head_ft=2.0,
+            crest_length_ft=10.0,
+            tailwater_head_ft=1.0,
+            required_discharge_cfs=75.0,
+        )
+        self.assertTrue(res_sub["pass"])
+        self.assertTrue(res_sub["is_submerged"])
+        self.assertAlmostEqual(res_sub["submergence_factor"], 0.8458, places=3)
+        self.assertLess(res_sub["q_capacity_cfs"], res_sub["q_unsubmerged_cfs"])
+
+        # Demand exceeding capacity failure
+        res_fail_cap = verify_weir_discharge_capacity(
+            head_ft=1.0,
+            crest_length_ft=5.0,
+            required_discharge_cfs=25.0,
+        )
+        self.assertFalse(res_fail_cap["pass"])
+        self.assertGreater(res_fail_cap["dcr"], 1.0)
+
+        # Freeboard violation failure
+        res_fail_fb = verify_weir_discharge_capacity(
+            head_ft=1.0,
+            crest_length_ft=10.0,
+            required_discharge_cfs=20.0,
+            freeboard_ft=0.5,
+            min_freeboard_ft=1.0,
+        )
+        self.assertFalse(res_fail_fb["pass"])
+        self.assertFalse(res_fail_fb["freeboard_ok"])
+
+        # Tailwater drowning weir error
+        res_drown = verify_weir_discharge_capacity(
+            head_ft=1.0,
+            crest_length_ft=10.0,
+            tailwater_head_ft=1.5,
+        )
+        self.assertFalse(res_drown["pass"])
+        self.assertEqual(res_drown["reason"], "tailwater_drowns_weir")
+
+        # Input error validation
+        res_nan = verify_weir_discharge_capacity(
+            head_ft=float("nan"),
+            crest_length_ft=10.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg_head = verify_weir_discharge_capacity(
+            head_ft=-1.0,
+            crest_length_ft=10.0,
+        )
+        self.assertFalse(res_neg_head["pass"])
+        self.assertEqual(res_neg_head["reason"], "non_positive_head")
+
+        res_inv_type = verify_weir_discharge_capacity(
+            head_ft=1.0,
+            crest_length_ft=10.0,
+            weir_type="parshall_flume",
+        )
+        self.assertFalse(res_inv_type["pass"])
+        self.assertEqual(res_inv_type["reason"], "invalid_weir_type")
 
 
 if __name__ == "__main__":

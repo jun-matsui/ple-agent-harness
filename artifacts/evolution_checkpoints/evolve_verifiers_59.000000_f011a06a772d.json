@@ -1,0 +1,9 @@
+{
+  "score": 59.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_weir_discharge_capacity",
+    "rationale": "Civil and Water Resources engineering exams frequently test open-channel discharge and detention pond outflow control across suppressed, contracted, V-notch, Cipolletti, and broad-crested weirs, including Villemonte submergence derating and freeboard compliance.",
+    "model": "gemini-3.8-flash"
+  }
+}
