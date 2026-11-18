@@ -1,0 +1,9 @@
+{
+  "score": 21.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_bolted_connection",
+    "rationale": "Evaluates AISC 360-16 Chapter J3 LRFD limit states for high-strength bolted shear connections, checking bolt shear rupture and plate bearing/tearout.",
+    "model": "gemini-3.8-flash"
+  }
+}

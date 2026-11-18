@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_bolted_connection,
     verify_ashrae_ventilation_rate,
     verify_asce7_seismic_base_shear,
     verify_hydronic_pipe_sizing,
@@ -673,6 +674,84 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_occupancy")
+
+
+    def test_aisc_bolted_connection(self) -> None:
+        from harness.verifiers import verify_aisc_bolted_connection
+
+        res_pass = verify_aisc_bolted_connection(
+            vu_kips=50.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            f_nv_ksi=54.0,
+            plate_thickness_in=0.50,
+            fu_ksi=58.0,
+            clear_distance_lc_in=1.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertEqual(res_pass["governing_limit_state"], "bolt_shear")
+        self.assertAlmostEqual(res_pass["phi_rnv_kips"], 71.57, places=1)
+
+        res_fail_shear = verify_aisc_bolted_connection(
+            vu_kips=85.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            f_nv_ksi=54.0,
+            plate_thickness_in=0.50,
+            fu_ksi=58.0,
+            clear_distance_lc_in=1.5,
+        )
+        self.assertFalse(res_fail_shear["pass"])
+        self.assertGreater(res_fail_shear["dcr"], 1.0)
+
+        res_bearing_gov = verify_aisc_bolted_connection(
+            vu_kips=30.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            f_nv_ksi=68.0,
+            plate_thickness_in=0.25,
+            fu_ksi=58.0,
+            clear_distance_lc_in=0.50,
+        )
+        self.assertFalse(res_bearing_gov["pass"])
+        self.assertEqual(res_bearing_gov["governing_limit_state"], "plate_bearing")
+
+        res_nan = verify_aisc_bolted_connection(
+            vu_kips=float("nan"),
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            f_nv_ksi=54.0,
+            plate_thickness_in=0.50,
+            fu_ksi=58.0,
+            clear_distance_lc_in=1.5,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_bolted_connection(
+            vu_kips=-10.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            f_nv_ksi=54.0,
+            plate_thickness_in=0.50,
+            fu_ksi=58.0,
+            clear_distance_lc_in=1.5,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_inv_bolts = verify_aisc_bolted_connection(
+            vu_kips=50.0,
+            num_bolts=0,
+            bolt_diameter_in=0.75,
+            f_nv_ksi=54.0,
+            plate_thickness_in=0.50,
+            fu_ksi=58.0,
+            clear_distance_lc_in=1.5,
+        )
+        self.assertFalse(res_inv_bolts["pass"])
+        self.assertEqual(res_inv_bolts["reason"], "invalid_bolt_count_or_shear_planes")
 
 
 if __name__ == "__main__":

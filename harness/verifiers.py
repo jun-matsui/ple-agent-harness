@@ -866,3 +866,64 @@ def verify_ashrae_ventilation_rate(
         "supplied_oa_cfm": round(supplied_oa_cfm, 2),
         "z_p": round(z_p, 4) if z_p is not None else None,
     }
+
+
+def verify_aisc_bolted_connection(
+    vu_kips: float,
+    num_bolts: int,
+    bolt_diameter_in: float,
+    f_nv_ksi: float,
+    plate_thickness_in: float,
+    fu_ksi: float,
+    clear_distance_lc_in: float,
+    num_shear_planes: int = 1,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """AISC 360-16 Chapter J3 LRFD check for bolted shear connections (shear rupture & bearing/tearout)."""
+    inputs = [
+        vu_kips,
+        float(num_bolts),
+        bolt_diameter_in,
+        f_nv_ksi,
+        plate_thickness_in,
+        fu_ksi,
+        clear_distance_lc_in,
+        float(num_shear_planes),
+        phi,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if vu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if num_bolts < 1 or num_shear_planes not in (1, 2):
+        return {"pass": False, "reason": "invalid_bolt_count_or_shear_planes"}
+    if (
+        min(bolt_diameter_in, f_nv_ksi, plate_thickness_in, fu_ksi, clear_distance_lc_in, phi)
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+
+    # AISC 360-16 Section J3.6 Nominal bolt shear strength
+    ab_in2 = (math.pi * (bolt_diameter_in**2)) / 4.0
+    rn_shear_single = f_nv_ksi * ab_in2 * num_shear_planes
+    phi_rnv_kips = phi * num_bolts * rn_shear_single
+
+    # AISC 360-16 Section J3.10 Bearing and tearout strength on connected material
+    rn_tearout = 1.2 * clear_distance_lc_in * plate_thickness_in * fu_ksi
+    rn_bearing_max = 2.4 * bolt_diameter_in * plate_thickness_in * fu_ksi
+    rn_bearing_single = min(rn_tearout, rn_bearing_max)
+    phi_rnb_kips = phi * num_bolts * rn_bearing_single
+
+    phi_rn_governing_kips = min(phi_rnv_kips, phi_rnb_kips)
+    dcr = vu_kips / phi_rn_governing_kips if phi_rn_governing_kips > 0 else float("inf")
+    limit_state = "bolt_shear" if phi_rnv_kips <= phi_rnb_kips else "plate_bearing"
+
+    passed = dcr <= 1.0
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_rn_kips": round(phi_rn_governing_kips, 2),
+        "phi_rnv_kips": round(phi_rnv_kips, 2),
+        "phi_rnb_kips": round(phi_rnb_kips, 2),
+        "governing_limit_state": limit_state,
+    }
