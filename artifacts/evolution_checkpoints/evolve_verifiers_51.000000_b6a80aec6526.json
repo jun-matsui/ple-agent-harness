@@ -1,0 +1,9 @@
+{
+  "score": 51.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_block_shear",
+    "rationale": "Evaluates AISC 360-16 Section J4.3 block shear rupture strength along concurrent shear and tension failure paths for bolted and welded connections. This addresses a major code-gate gap in structural connection design on the Physical Engineering's Last Exam.",
+    "model": "gemini-3.8-flash"
+  }
+}

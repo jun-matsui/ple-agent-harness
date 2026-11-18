@@ -3336,3 +3336,59 @@ def verify_nfpa13_fire_sprinkler_demand(
         "design_density_gpm_sqft": round(eff_density, 3),
         "hose_allowance_gpm": round(eff_hose, 1),
     }
+
+
+def verify_aisc_block_shear(
+    pu_kips: float,
+    agv_in2: float,
+    anv_in2: float,
+    ant_in2: float,
+    agt_in2: float = 0.0,
+    fy_ksi: float = 50.0,
+    fu_ksi: float = 65.0,
+    u_bs: float = 1.0,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """AISC 360-16 Section J4.3 LRFD check for block shear rupture on connection failure paths."""
+    scalars = [pu_kips, agv_in2, anv_in2, ant_in2, agt_in2, fy_ksi, fu_ksi, u_bs, phi]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if pu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if min(agv_in2, anv_in2, ant_in2, fy_ksi, fu_ksi, phi) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if agt_in2 < 0:
+        return {"pass": False, "reason": "negative_gross_tension_area"}
+    if anv_in2 > agv_in2:
+        return {"pass": False, "reason": "net_shear_area_exceeds_gross"}
+    if agt_in2 > 0.0 and ant_in2 > agt_in2:
+        return {"pass": False, "reason": "net_tension_area_exceeds_gross"}
+    if not (0.0 < u_bs <= 1.0):
+        return {"pass": False, "reason": "invalid_shear_lag_factor"}
+
+    # AISC 360-16 Eq. J4-5 block shear nominal strength
+    tension_rupture_kips = u_bs * fu_ksi * ant_in2
+    rn_rupture_kips = 0.60 * fu_ksi * anv_in2 + tension_rupture_kips
+    rn_yielding_kips = 0.60 * fy_ksi * agv_in2 + tension_rupture_kips
+
+    rn_gov_kips = min(rn_rupture_kips, rn_yielding_kips)
+    limit_state = (
+        "shear_rupture"
+        if rn_rupture_kips <= rn_yielding_kips
+        else "shear_yielding"
+    )
+
+    phi_rn_kips = phi * rn_gov_kips
+    dcr = pu_kips / phi_rn_kips if phi_rn_kips > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_rn_kips": round(phi_rn_kips, 2),
+        "rn_kips": round(rn_gov_kips, 2),
+        "rn_rupture_kips": round(rn_rupture_kips, 2),
+        "rn_yielding_kips": round(rn_yielding_kips, 2),
+        "governing_limit_state": limit_state,
+        "tension_term_kips": round(tension_rupture_kips, 2),
+    }

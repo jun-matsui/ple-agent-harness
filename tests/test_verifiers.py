@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_block_shear,
     verify_nfpa13_fire_sprinkler_demand,
     verify_asce7_nonstructural_component_seismic,
     verify_nec_equipment_grounding_conductor,
@@ -3231,6 +3232,115 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_hazard["pass"])
         self.assertEqual(res_inv_hazard["reason"], "invalid_hazard_classification")
+
+
+    def test_aisc_block_shear(self) -> None:
+        from harness.verifiers import verify_aisc_block_shear
+
+        # Standard passing block shear case governed by shear yielding cap
+        res_pass = verify_aisc_block_shear(
+            pu_kips=80.0,
+            agv_in2=4.5,
+            anv_in2=3.5,
+            ant_in2=1.0,
+            fy_ksi=50.0,
+            fu_ksi=65.0,
+            u_bs=1.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["governing_limit_state"], "shear_yielding")
+        self.assertAlmostEqual(res_pass["tension_term_kips"], 65.0, places=1)
+        self.assertAlmostEqual(res_pass["rn_yielding_kips"], 200.0, places=1)
+        self.assertAlmostEqual(res_pass["rn_rupture_kips"], 201.5, places=1)
+        self.assertAlmostEqual(res_pass["phi_rn_kips"], 150.0, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 80.0 / 150.0, places=4)
+
+        # Passing case governed by shear rupture limit
+        res_rupture = verify_aisc_block_shear(
+            pu_kips=90.0,
+            agv_in2=6.0,
+            anv_in2=3.0,
+            ant_in2=1.0,
+            fy_ksi=50.0,
+            fu_ksi=65.0,
+            u_bs=1.0,
+        )
+        self.assertTrue(res_rupture["pass"])
+        self.assertEqual(res_rupture["governing_limit_state"], "shear_rupture")
+        self.assertAlmostEqual(res_rupture["rn_rupture_kips"], 182.0, places=1)
+        self.assertAlmostEqual(res_rupture["phi_rn_kips"], 136.5, places=1)
+
+        # Non-uniform tension stress reduction (Ubs = 0.5 for coped beam)
+        res_coped = verify_aisc_block_shear(
+            pu_kips=70.0,
+            agv_in2=4.5,
+            anv_in2=3.5,
+            ant_in2=1.0,
+            u_bs=0.5,
+        )
+        self.assertTrue(res_coped["pass"])
+        self.assertAlmostEqual(res_coped["tension_term_kips"], 32.5, places=1)
+
+        # Overloaded demand failure (dcr > 1.0)
+        res_fail = verify_aisc_block_shear(
+            pu_kips=160.0,
+            agv_in2=4.5,
+            anv_in2=3.5,
+            ant_in2=1.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr luxuries", "dcr"], 1.0) if "dcr luxuries" in res_fail else self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Geometry violation: net shear area exceeds gross shear area
+        res_area_err = verify_aisc_block_shear(
+            pu_kips=50.0,
+            agv_in2=3.0,
+            anv_in2=3.5,
+            ant_in2=1.0,
+        )
+        self.assertFalse(res_area_err["pass"])
+        self.assertEqual(res_area_err["reason"], "net_shear_area_exceeds_gross")
+
+        # Net tension area exceeds provided gross tension area
+        res_tens_err = verify_aisc_block_shear(
+            pu_kips=50.0,
+            agv_in2=4.5,
+            anv_in2=3.5,
+            ant_in2=1.5,
+            agt_in2=1.2,
+        )
+        self.assertFalse(res_tens_err["pass"])
+        self.assertEqual(res_tens_err["reason"], "net_tension_area_exceeds_gross")
+
+        # Invalid shear lag factor Ubs
+        res_ubs_err = verify_aisc_block_shear(
+            pu_kips=50.0,
+            agv_in2=4.5,
+            anv_in2=3.5,
+            ant_in2=1.0,
+            u_bs=1.25,
+        )
+        self.assertFalse(res_ubs_err["pass"])
+        self.assertEqual(res_ubs_err["reason"], "invalid_shear_lag_factor")
+
+        # NaN and negative input validation
+        res_nan = verify_aisc_block_shear(
+            pu_kips=float("nan"),
+            agv_in2=4.5,
+            anv_in2=3.5,
+            ant_in2=1.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_block_shear(
+            pu_kips=-20.0,
+            agv_in2=4.5,
+            anv_in2=3.5,
+            ant_in2=1.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
 
 
 if __name__ == "__main__":
