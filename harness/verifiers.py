@@ -2864,3 +2864,115 @@ def verify_asme_b313_pipe_thickness(
         "mawp_psi": round(mawp_psi, 2),
         "effective_thickness_in": round(t_eff_in, 4),
     }
+
+
+def verify_meyerhof_bearing_capacity(
+    applied_load_kips: float,
+    footing_width_ft: float,
+    footing_length_ft: float,
+    embedment_depth_ft: float,
+    soil_cohesion_psf: float,
+    soil_friction_angle_deg: float,
+    soil_unit_weight_pcf: float,
+    water_table_depth_ft: float = 999.0,
+    load_eccentricity_b_ft: float = 0.0,
+    load_eccentricity_l_ft: float = 0.0,
+    min_fs: float = 3.0,
+) -> Dict[str, Any]:
+    """Meyerhof general bearing capacity check for shallow footings with shape, depth, and water table effects."""
+    inputs = [
+        applied_load_kips,
+        footing_width_ft,
+        footing_length_ft,
+        embedment_depth_ft,
+        soil_cohesion_psf,
+        soil_friction_angle_deg,
+        soil_unit_weight_pcf,
+        water_table_depth_ft,
+        load_eccentricity_b_ft,
+        load_eccentricity_l_ft,
+        min_fs,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if applied_load_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if min(footing_width_ft, footing_length_ft, soil_unit_weight_pcf, min_fs) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_soil_property"}
+    if embedment_depth_ft < 0 or soil_cohesion_psf < 0 or water_table_depth_ft < 0:
+        return {"pass": False, "reason": "negative_depth_or_cohesion"}
+    if not (0.0 <= soil_friction_angle_deg < 50.0):
+        return {"pass": False, "reason": "invalid_friction_angle"}
+    if load_eccentricity_b_ft < 0 or load_eccentricity_l_ft < 0:
+        return {"pass": False, "reason": "negative_eccentricity"}
+
+    # Effective dimensions accounting for Meyerhof eccentricity reduction
+    b_prime = footing_width_ft - 2.0 * load_eccentricity_b_ft
+    l_prime = footing_length_ft - 2.0 * load_eccentricity_l_ft
+    if b_prime <= 0 or l_prime <= 0:
+        return {"pass": False, "reason": "excessive_eccentricity"}
+
+    b_eff = min(b_prime, l_prime)
+    l_eff = max(b_prime, l_prime)
+    effective_area_sqft = b_eff * l_eff
+
+    phi_rad = math.radians(soil_friction_angle_deg)
+    # Bearing capacity factors
+    if soil_friction_angle_deg == 0.0:
+        n_q = 1.0
+        n_c = 5.14
+        n_gamma = 0.0
+    else:
+        n_q = math.exp(math.pi * math.tan(phi_rad)) * (math.tan(math.radians(45.0 + soil_friction_angle_deg / 2.0)) ** 2)
+        n_c = (n_q - 1.0) / math.tan(phi_rad)
+        n_gamma = 2.0 * (n_q + 1.0) * math.tan(phi_rad)
+
+    # Meyerhof shape factors
+    s_c = 1.0 + (b_eff / l_eff) * (n_q / n_c)
+    s_q = 1.0 + (b_eff / l_eff) * math.tan(phi_rad)
+    s_gamma = 1.0 - 0.4 * (b_eff / l_eff)
+
+    # Meyerhof depth factors
+    k_ratio = (embedment_depth_ft / b_eff) if (embedment_depth_ft / b_eff) <= 1.0 else math.atan(embedment_depth_ft / b_eff)
+    d_c = 1.0 + 0.4 * k_ratio
+    d_q = 1.0 + 2.0 * math.tan(phi_rad) * ((1.0 - math.sin(phi_rad)) ** 2) * k_ratio
+    d_gamma = 1.0
+
+    # Groundwater table correction on surcharge q and soil unit weight gamma
+    gamma_w = 62.4
+    if water_table_depth_ft >= (embedment_depth_ft + b_eff):
+        q_surcharge = soil_unit_weight_pcf * embedment_depth_ft
+        gamma_eff = soil_unit_weight_pcf
+    elif water_table_depth_ft <= embedment_depth_ft:
+        gamma_sub = max(soil_unit_weight_pcf - gamma_w, 0.0)
+        q_surcharge = soil_unit_weight_pcf * water_table_depth_ft + gamma_sub * (embedment_depth_ft - water_table_depth_ft)
+        gamma_eff = gamma_sub
+    else:
+        gamma_sub = max(soil_unit_weight_pcf - gamma_w, 0.0)
+        d_w_below = water_table_depth_ft - embedment_depth_ft
+        q_surcharge = soil_unit_weight_pcf * embedment_depth_ft
+        gamma_eff = gamma_sub + (d_w_below / b_eff) * (soil_unit_weight_pcf - gamma_sub)
+
+    # Meyerhof ultimate bearing capacity (psf)
+    q_ult_psf = (
+        soil_cohesion_psf * n_c * s_c * d_c
+        + q_surcharge * n_q * s_q * d_q
+        + 0.5 * gamma_eff * b_eff * n_gamma * s_gamma * d_gamma
+    )
+    q_allow_psf = q_ult_psf / min_fs
+
+    q_applied_psf = (applied_load_kips * 1000.0) / effective_area_sqft if effective_area_sqft > 0 else float("inf")
+    fs_actual = q_ult_psf / q_applied_psf if q_applied_psf > 0 else float("inf")
+    dcr = q_applied_psf / q_allow_psf if q_allow_psf > 0 else float("inf")
+
+    passed = (dcr <= 1.0) and (fs_actual >= min_fs)
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "actual_fs": round(fs_actual, 3),
+        "q_applied_psf": round(q_applied_psf, 2),
+        "q_allowable_psf": round(q_allow_psf, 2),
+        "q_ultimate_psf": round(q_ult_psf, 2),
+        "effective_width_ft": round(b_eff, 2),
+        "effective_length_ft": round(l_eff, 2),
+    }

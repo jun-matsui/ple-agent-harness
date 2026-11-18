@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_meyerhof_bearing_capacity,
     verify_asme_b313_pipe_thickness,
     verify_asce7_seismic_force_distribution,
     verify_aisc_web_local_yielding_and_crippling,
@@ -2777,6 +2778,92 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_e["pass"])
         self.assertEqual(res_inv_e["reason"], "invalid_weld_efficiency")
+
+
+    def test_meyerhof_bearing_capacity(self) -> None:
+        from harness.verifiers import verify_meyerhof_bearing_capacity
+
+        # Standard spread footing in sand/silt passing check
+        res_pass = verify_meyerhof_bearing_capacity(
+            applied_load_kips=180.0,
+            footing_width_ft=6.0,
+            footing_length_ft=6.0,
+            embedment_depth_ft=4.0,
+            soil_cohesion_psf=200.0,
+            soil_friction_angle_deg=30.0,
+            soil_unit_weight_pcf=115.0,
+            min_fs=3.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertGreaterEqual(res_pass["actual_fs"], 3.0)
+        self.assertAlmostEqual(res_pass["q_applied_psf"], 5000.0, places=1)
+        self.assertGreater(res_pass["q_ultimate_psf"], 30000.0)
+
+        # Overloaded footing failure (dcr > 1.0)
+        res_fail_load = verify_meyerhof_bearing_capacity(
+            applied_load_kips=500.0,
+            footing_width_ft=6.0,
+            footing_length_ft=6.0,
+            embedment_depth_ft=4.0,
+            soil_cohesion_psf=200.0,
+            soil_friction_angle_deg=30.0,
+            soil_unit_weight_pcf=115.0,
+        )
+        self.assertFalse(res_fail_load["pass"])
+        self.assertGreater(res_fail_load["dcr"], 1.0)
+
+        # High water table derating capacity
+        res_water = verify_meyerhof_bearing_capacity(
+            applied_load_kips=180.0,
+            footing_width_ft=6.0,
+            footing_length_ft=6.0,
+            embedment_depth_ft=4.0,
+            soil_cohesion_psf=200.0,
+            soil_friction_angle_deg=30.0,
+            soil_unit_weight_pcf=115.0,
+            water_table_depth_ft=1.0,
+        )
+        self.assertLess(res_water["q_ultimate_psf"], res_pass["q_ultimate_psf"])
+
+        # Excessive eccentricity failure
+        res_ecc = verify_meyerhof_bearing_capacity(
+            applied_load_kips=50.0,
+            footing_width_ft=6.0,
+            footing_length_ft=6.0,
+            embedment_depth_ft=4.0,
+            soil_cohesion_psf=200.0,
+            soil_friction_angle_deg=30.0,
+            soil_unit_weight_pcf=115.0,
+            load_eccentricity_b_ft=3.5,
+        )
+        self.assertFalse(res_ecc["pass"])
+        self.assertEqual(res_ecc["reason"], "excessive_eccentricity")
+
+        # Input validation checks
+        res_nan = verify_meyerhof_bearing_capacity(
+            applied_load_kips=float("nan"),
+            footing_width_ft=6.0,
+            footing_length_ft=6.0,
+            embedment_depth_ft=4.0,
+            soil_cohesion_psf=200.0,
+            soil_friction_angle_deg=30.0,
+            soil_unit_weight_pcf=115.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_meyerhof_bearing_capacity(
+            applied_load_kips=-10.0,
+            footing_width_ft=6.0,
+            footing_length_ft=6.0,
+            embedment_depth_ft=4.0,
+            soil_cohesion_psf=200.0,
+            soil_friction_angle_deg=30.0,
+            soil_unit_weight_pcf=115.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
 
 
 if __name__ == "__main__":

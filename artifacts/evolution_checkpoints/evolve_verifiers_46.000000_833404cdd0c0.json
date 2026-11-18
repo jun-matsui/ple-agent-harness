@@ -1,0 +1,9 @@
+{
+  "score": 46.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_meyerhof_bearing_capacity",
+    "rationale": "Implements the Meyerhof general bearing capacity equation with shape, depth, and groundwater table modification factors, which is one of the most frequently tested core competencies on the PE Civil (Geotechnical & Structural) examination. It deterministic checks shallow spread footing bearing capacity against applied vertical column loads including eccentricities.",
+    "model": "gemini-3.8-flash"
+  }
+}
