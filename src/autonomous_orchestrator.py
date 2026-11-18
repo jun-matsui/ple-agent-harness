@@ -158,6 +158,20 @@ def run_cycle(cycle: int, run_evolution: bool = False) -> Dict[str, Any]:
         )
 
     tests_ok, test_summary = run_unit_tests()
+    if evo_result and evo_result.get("accepted") and tests_ok:
+        try:
+            subprocess.run(["git", "add", "-A"], cwd=str(ROOT_DIR), check=True, timeout=15)
+            fn = evo_result.get("function_name", "evolve")
+            subprocess.run(
+                ["git", "commit", "-m", f"Auto-evolve cycle {cycle}: {fn}"],
+                cwd=str(ROOT_DIR),
+                check=False,
+                timeout=15,
+            )
+            subprocess.run(["git", "push", "origin", "main"], cwd=str(ROOT_DIR), check=True, timeout=30)
+            log_msg(f"Cycle {cycle}: pushed accepted evolution ({fn}) to GitHub.")
+        except Exception as exc:
+            log_msg(f"Cycle {cycle}: git auto-push warning: {exc}")
     serve_sha = sha256_file(ROOT_DIR / "harness" / "serve.py")
     verifier_sha = sha256_file(ROOT_DIR / "harness" / "verifiers.py")
     kaggle_info = poll_kaggle_competition()
