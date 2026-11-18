@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_heat_exchanger_lmtd,
     verify_open_channel_hydraulic_jump,
     verify_nrcs_tr55_runoff,
     verify_asce7_snow_drift,
@@ -3621,6 +3622,122 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_geometry_or_flow")
+
+
+    def test_heat_exchanger_lmtd(self) -> None:
+        from harness.verifiers import verify_heat_exchanger_lmtd
+
+        # Standard passing counterflow water-to-water heat exchanger
+        res_pass = verify_heat_exchanger_lmtd(
+            q_design_btuh=400000.0,
+            th_in_f=180.0,
+            th_out_f=140.0,
+            tc_in_f=60.0,
+            tc_out_f=100.0,
+            u_overall_btu_hr_sqft_f=100.0,
+            area_sqft=60.0,
+            flow_type="counterflow",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["lmtd_f"], 80.0)
+        self.assertEqual(res_pass["f_factor"], 1.0)
+        self.assertEqual(res_pass["area_required_sqft"], 50.0)
+        self.assertAlmostEqual(res_pass["dcr"], 400000.0 / 480000.0, places=4)
+
+        # 1-2 shell and tube exchanger with F-factor correction
+        res_st = verify_heat_exchanger_lmtd(
+            q_design_btuh=500000.0,
+            th_in_f=200.0,
+            th_out_f=140.0,
+            tc_in_f=80.0,
+            tc_out_f=120.0,
+            u_overall_btu_hr_sqft_f=150.0,
+            area_sqft=60.0,
+            flow_type="shell_tube_1_2",
+        )
+        self.assertTrue(res_st["pass"])
+        self.assertAlmostEqual(res_st["f_factor"], 0.9105, places=2)
+        self.assertLess(res_st["dcr"], 1.0)
+
+        # Undersized surface area failure
+        res_fail_area = verify_heat_exchanger_lmtd(
+            q_design_btuh=600000.0,
+            th_in_f=180.0,
+            th_out_f=140.0,
+            tc_in_f=60.0,
+            tc_out_f=100.0,
+            u_overall_btu_hr_sqft_f=100.0,
+            area_sqft=50.0,
+        )
+        self.assertFalse(res_fail_area["pass"])
+        self.assertGreater(res_fail_area["dcr"], 1.0)
+
+        # Temperature cross in parallel flow
+        res_cross_par = verify_heat_exchanger_lmtd(
+            q_design_btuh=200000.0,
+            th_in_f=150.0,
+            th_out_f=100.0,
+            tc_in_f=70.0,
+            tc_out_f=110.0,
+            u_overall_btu_hr_sqft_f=100.0,
+            area_sqft=50.0,
+            flow_type="parallel",
+        )
+        self.assertFalse(res_cross_par["pass"])
+        self.assertEqual(res_cross_par["reason"], "parallel_flow_temperature_cross")
+
+        # Temperature cross in counterflow
+        res_cross_cnt = verify_heat_exchanger_lmtd(
+            q_design_btuh=200000.0,
+            th_in_f=150.0,
+            th_out_f=100.0,
+            tc_in_f=70.0,
+            tc_out_f=160.0,
+            u_overall_btu_hr_sqft_f=100.0,
+            area_sqft=50.0,
+            flow_type="counterflow",
+        )
+        self.assertFalse(res_cross_cnt["pass"])
+        self.assertEqual(res_cross_cnt["reason"], "temperature_cross_violation")
+
+        # Thermodynamic violation: hot stream heating instead of cooling
+        res_heat_err = verify_heat_exchanger_lmtd(
+            q_design_btuh=200000.0,
+            th_in_f=140.0,
+            th_out_f=160.0,
+            tc_in_f=60.0,
+            tc_out_f=100.0,
+            u_overall_btu_hr_sqft_f=100.0,
+            area_sqft=50.0,
+        )
+        self.assertFalse(res_heat_err["pass"])
+        self.assertEqual(res_heat_err["reason"], "hot_stream_does_not_cool")
+
+        # NaN input validation
+        res_nan = verify_heat_exchanger_lmtd(
+            q_design_btuh=float("nan"),
+            th_in_f=180.0,
+            th_out_f=140.0,
+            tc_in_f=60.0,
+            tc_out_f=100.0,
+            u_overall_btu_hr_sqft_f=100.0,
+            area_sqft=50.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Non-positive input validation
+        res_neg = verify_heat_exchanger_lmtd(
+            q_design_btuh=-100000.0,
+            th_in_f=180.0,
+            th_out_f=140.0,
+            tc_in_f=60.0,
+            tc_out_f=100.0,
+            u_overall_btu_hr_sqft_f=100.0,
+            area_sqft=50.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_duty_or_geometry")
 
 
 if __name__ == "__main__":

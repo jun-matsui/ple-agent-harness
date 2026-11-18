@@ -3692,3 +3692,100 @@ def verify_open_channel_hydraulic_jump(
         "froude_ok": froude_ok,
         "tailwater_ok": tw_ok,
     }
+
+
+def verify_heat_exchanger_lmtd(
+    q_design_btuh: float,
+    th_in_f: float,
+    th_out_f: float,
+    tc_in_f: float,
+    tc_out_f: float,
+    u_overall_btu_hr_sqft_f: float,
+    area_sqft: float,
+    flow_type: str = "counterflow",
+    min_f_factor: float = 0.75,
+) -> Dict[str, Any]:
+    """ASHRAE/AHRI heat exchanger thermal rating, LMTD, and F-correction factor check."""
+    scalars = [
+        q_design_btuh,
+        th_in_f,
+        th_out_f,
+        tc_in_f,
+        tc_out_f,
+        u_overall_btu_hr_sqft_f,
+        area_sqft,
+        min_f_factor,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if min(q_design_btuh, u_overall_btu_hr_sqft_f, area_sqft, min_f_factor) <= 0:
+        return {"pass": False, "reason": "non_positive_duty_or_geometry"}
+    if th_in_f <= th_out_f:
+        return {"pass": False, "reason": "hot_stream_does_not_cool"}
+    if tc_out_f <= tc_in_f:
+        return {"pass": False, "reason": "cold_stream_does_not_heat"}
+    if th_in_f <= tc_in_f:
+        return {"pass": False, "reason": "hot_inlet_not_above_cold_inlet"}
+
+    ft = flow_type.strip().lower()
+    if ft not in ("counterflow", "parallel", "shell_tube_1_2"):
+        return {"pass": False, "reason": "invalid_flow_type"}
+
+    if ft == "parallel":
+        dt1 = th_in_f - tc_in_f
+        dt2 = th_out_f - tc_out_f
+        if dt2 <= 0:
+            return {"pass": False, "reason": "parallel_flow_temperature_cross"}
+    else:
+        dt1 = th_in_f - tc_out_f
+        dt2 = th_out_f - tc_in_f
+        if dt1 <= 0 or dt2 <= 0:
+            return {"pass": False, "reason": "temperature_cross_violation"}
+
+    if abs(dt1 - dt2) < 1e-6:
+        lmtd = dt1
+    else:
+        lmtd = (dt1 - dt2) / math.log(dt1 / dt2)
+
+    if ft in ("counterflow", "parallel"):
+        f_factor = 1.0
+    else:
+        denom_p = th_in_f - tc_in_f
+        p = (tc_out_f - tc_in_f) / denom_p
+        denom_r = tc_out_f - tc_in_f
+        r = (th_in_f - th_out_f) / denom_r
+
+        if p >= 1.0 or (p * r) >= 1.0:
+            return {"pass": False, "reason": "thermal_effectiveness_out_of_range"}
+
+        term_sqrt = math.sqrt(r**2 + 1.0)
+        num_arg = (1.0 - p) / (1.0 - p * r)
+        if num_arg <= 0:
+            return {"pass": False, "reason": "invalid_log_argument_in_f_factor"}
+
+        if abs(r - 1.0) < 1e-6:
+            den_arg = (2.0 - p * (2.0 - math.sqrt(2.0))) / (2.0 - p * (2.0 + math.sqrt(2.0)))
+            if den_arg <= 0:
+                return {"pass": False, "reason": "temperature_cross_in_shell_pass"}
+            f_factor = (math.sqrt(2.0) * p / (1.0 - p)) / math.log(den_arg)
+        else:
+            den_arg = (2.0 - p * (r + 1.0 - term_sqrt)) / (2.0 - p * (r + 1.0 + term_sqrt))
+            if den_arg <= 0:
+                return {"pass": False, "reason": "temperature_cross_in_shell_pass"}
+            f_factor = (term_sqrt * math.log(num_arg) / (r - 1.0)) / math.log(den_arg)
+
+    f_factor = max(0.0, min(f_factor, 1.0))
+    q_available_btuh = u_overall_btu_hr_sqft_f * area_sqft * f_factor * lmtd
+    area_required_sqft = q_design_btuh / (u_overall_btu_hr_sqft_f * f_factor * lmtd)
+    dcr = q_design_btuh / q_available_btuh if q_available_btuh > 0 else float("inf")
+
+    passed = (dcr <= 1.0) and (f_factor >= min_f_factor)
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "q_available_btuh": round(q_available_btuh, 2),
+        "area_required_sqft": round(area_required_sqft, 2),
+        "lmtd_f": round(lmtd, 2),
+        "f_factor": round(f_factor, 4),
+        "flow_type": ft,
+    }

@@ -1,0 +1,9 @@
+{
+  "score": 55.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_heat_exchanger_lmtd",
+    "rationale": "Fills a critical Mechanical PE (HVAC & Thermal/Fluid Systems) code-gate verification gap by evaluating heat exchanger thermal rating, log mean temperature difference (LMTD), and shell-and-tube F-factor correction per AHRI/ASHRAE standards.",
+    "model": "gemini-3.8-flash"
+  }
+}
