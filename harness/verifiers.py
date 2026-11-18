@@ -1724,3 +1724,81 @@ def verify_hvac_cooling_load_capacity(
         "density_ratio": round(density_ratio, 4),
         "ach": round(ach, 2) if ach is not None else None,
     }
+
+
+def verify_aisc_column_base_plate(
+    pu_kips: float,
+    b_in: float,
+    n_in: float,
+    tp_in: float,
+    col_d_in: float,
+    col_bf_in: float,
+    fc_psi: float,
+    fy_ksi: float = 36.0,
+    pedestal_area_sqin: float = 0.0,
+    phi_bearing: float = 0.65,
+    phi_flexure: float = 0.90,
+) -> Dict[str, Any]:
+    """AISC 360-16 Section J8 & AISC Design Guide 1 column base plate bearing and thickness check."""
+    inputs = [
+        pu_kips,
+        b_in,
+        n_in,
+        tp_in,
+        col_d_in,
+        col_bf_in,
+        fc_psi,
+        fy_ksi,
+        pedestal_area_sqin,
+        phi_bearing,
+        phi_flexure,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if pu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(b_in, n_in, tp_in, col_d_in, col_bf_in, fc_psi, fy_ksi, phi_bearing, phi_flexure)
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if col_d_in > n_in or col_bf_in > b_in:
+        return {"pass": False, "reason": "column_exceeds_base_plate"}
+
+    a1_sqin = b_in * n_in
+    if pedestal_area_sqin < 0:
+        return {"pass": False, "reason": "negative_pedestal_area"}
+    if pedestal_area_sqin > 0 and pedestal_area_sqin < a1_sqin:
+        return {"pass": False, "reason": "pedestal_area_less_than_plate_area"}
+
+    # AISC 360-16 Section J8 concrete bearing capacity
+    a2_sqin = pedestal_area_sqin if pedestal_area_sqin > 0 else a1_sqin
+    area_confinement_factor = min(math.sqrt(a2_sqin / a1_sqin), 2.0)
+    fc_ksi = fc_psi / 1000.0
+    pp_kips = 0.85 * fc_ksi * a1_sqin * area_confinement_factor
+    phi_pp_kips = phi_bearing * pp_kips
+    bearing_dcr = pu_kips / phi_pp_kips if phi_pp_kips > 0 else float("inf")
+
+    # AISC Design Guide 1 Thornton cantilever dimensions m, n, and n'
+    m_in = (n_in - 0.95 * col_d_in) / 2.0
+    n_cant_in = (b_in - 0.80 * col_bf_in) / 2.0
+    n_prime_in = math.sqrt(col_d_in * col_bf_in) / 4.0
+    l_crit_in = max(m_in, n_cant_in, n_prime_in)
+
+    # Required base plate thickness (AISC DG 1 Eq. 3.3.13)
+    fp_ksi = pu_kips / a1_sqin
+    t_min_in = l_crit_in * math.sqrt((2.0 * fp_ksi) / (phi_flexure * fy_ksi))
+    thickness_dcr = t_min_in / tp_in
+    gov_dcr = max(bearing_dcr, thickness_dcr)
+
+    passed = (bearing_dcr <= 1.0) and (thickness_dcr <= 1.0)
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "bearing_dcr": round(bearing_dcr, 4),
+        "thickness_dcr": round(thickness_dcr, 4),
+        "t_min_in": round(t_min_in, 3),
+        "phi_pp_kips": round(phi_pp_kips, 2),
+        "critical_cantilever_in": round(l_crit_in, 3),
+        "bearing_pressure_ksi": round(fp_ksi, 4),
+    }

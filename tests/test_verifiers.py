@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_column_base_plate,
     verify_hvac_cooling_load_capacity,
     verify_aci_punching_shear,
     verify_stormwater_rational_runoff,
@@ -1631,6 +1632,102 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_nan["pass"])
         self.assertEqual(res_nan["reason"], "nan_input")
+
+
+    def test_aisc_column_base_plate(self) -> None:
+        from harness.verifiers import verify_aisc_column_base_plate
+
+        res_pass = verify_aisc_column_base_plate(
+            pu_kips=400.0,
+            b_in=18.0,
+            n_in=18.0,
+            tp_in=1.75,
+            col_d_in=12.7,
+            col_bf_in=12.2,
+            fc_psi=4000.0,
+            fy_ksi=36.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertAlmostEqual(res_pass["critical_cantilever_in"], 4.12, places=2)
+        self.assertAlmostEqual(res_pass["phi_pp_kips"], 716.04, places=1)
+        self.assertAlmostEqual(res_pass["t_min_in"], 1.137, places=2)
+
+        res_pedestal = verify_aisc_column_base_plate(
+            pu_kips=800.0,
+            b_in=18.0,
+            n_in=18.0,
+            tp_in=2.0,
+            col_d_in=12.7,
+            col_bf_in=12.2,
+            fc_psi=4000.0,
+            fy_ksi=36.0,
+            pedestal_area_sqin=1296.0,
+        )
+        self.assertTrue(res_pedestal["pass"])
+        self.assertAlmostEqual(res_pedestal["phi_pp_kips"], 1432.08, places=1)
+
+        res_fail_thick = verify_aisc_column_base_plate(
+            pu_kips=400.0,
+            b_in=18.0,
+            n_in=18.0,
+            tp_in=1.0,
+            col_d_in=12.7,
+            col_bf_in=12.2,
+            fc_psi=4000.0,
+            fy_ksi=36.0,
+        )
+        self.assertFalse(res_fail_thick["pass"])
+        self.assertGreater(res_fail_thick["thickness_dcr"], 1.0)
+
+        res_fail_bearing = verify_aisc_column_base_plate(
+            pu_kips=900.0,
+            b_in=18.0,
+            n_in=18.0,
+            tp_in=2.5,
+            col_d_in=12.7,
+            col_bf_in=12.2,
+            fc_psi=4000.0,
+            fy_ksi=36.0,
+        )
+        self.assertFalse(res_fail_bearing["pass"])
+        self.assertGreater(res_fail_bearing["bearing_dcr"], 1.0)
+
+        res_col_too_big = verify_aisc_column_base_plate(
+            pu_kips=100.0,
+            b_in=10.0,
+            n_in=18.0,
+            tp_in=1.0,
+            col_d_in=12.7,
+            col_bf_in=12.2,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_col_too_big["pass"])
+        self.assertEqual(res_col_too_big["reason"], "column_exceeds_base_plate")
+
+        res_nan = verify_aisc_column_base_plate(
+            pu_kips=float("nan"),
+            b_in=18.0,
+            n_in=18.0,
+            tp_in=1.75,
+            col_d_in=12.7,
+            col_bf_in=12.2,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_column_base_plate(
+            pu_kips=-50.0,
+            b_in=18.0,
+            n_in=18.0,
+            tp_in=1.75,
+            col_d_in=12.7,
+            col_bf_in=12.2,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
 
 
 if __name__ == "__main__":

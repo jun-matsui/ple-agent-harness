@@ -1,0 +1,9 @@
+{
+  "score": 33.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_column_base_plate",
+    "rationale": "Appends AISC 360-16 Section J8 and AISC Design Guide 1 LRFD concentric column base plate verification, covering concrete bearing capacity with pedestal confinement and Thornton cantilever plate thickness demands commonly tested in structural engineering licensing exams.",
+    "model": "gemini-3.8-flash"
+  }
+}
