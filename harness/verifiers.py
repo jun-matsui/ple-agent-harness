@@ -4754,3 +4754,147 @@ def verify_nec_dwelling_service_load(
         "capacity_ok": capacity_ok,
         "service_size_ok": service_size_ok,
     }
+
+
+def verify_aashto_pavement_structural_number(
+    design_esals: float,
+    d1_surface_in: float,
+    d2_base_in: float,
+    d3_subbase_in: float = 0.0,
+    a1_coeff: float = 0.44,
+    a2_coeff: float = 0.14,
+    a3_coeff: float = 0.11,
+    m2_drainage: float = 1.0,
+    m3_drainage: float = 1.0,
+    subgrade_resilient_modulus_psi: float = 5000.0,
+    reliability_pct: float = 90.0,
+    overall_std_dev: float = 0.45,
+    initial_psi: float = 4.2,
+    terminal_psi: float = 2.5,
+    zr_override: float = 0.0,
+) -> Dict[str, Any]:
+    """AASHTO (1993) flexible pavement structural number, layer thickness, and ESAL capacity gate."""
+    scalars = [
+        design_esals,
+        d1_surface_in,
+        d2_base_in,
+        d3_subbase_in,
+        a1_coeff,
+        a2_coeff,
+        a3_coeff,
+        m2_drainage,
+        m3_drainage,
+        subgrade_resilient_modulus_psi,
+        reliability_pct,
+        overall_std_dev,
+        initial_psi,
+        terminal_psi,
+        zr_override,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            design_esals,
+            d1_surface_in,
+            d2_base_in,
+            a1_coeff,
+            a2_coeff,
+            m2_drainage,
+            subgrade_resilient_modulus_psi,
+            overall_std_dev,
+            terminal_psi,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_traffic"}
+    if d3_subbase_in < 0 or a3_coeff < 0 or m3_drainage < 0:
+        return {"pass": False, "reason": "negative_subbase_parameter"}
+    if initial_psi <= terminal_psi:
+        return {"pass": False, "reason": "initial_serviceability_not_above_terminal"}
+    if initial_psi > 5.0 or terminal_psi < 1.0:
+        return {"pass": False, "reason": "serviceability_index_out_of_bounds"}
+
+    # AASHTO Table 5.1 minimum layer thickness checks based on ESAL traffic level
+    if design_esals <= 50000.0:
+        min_d1, min_d2 = 1.0, 4.0
+    elif design_esals <= 150000.0:
+        min_d1, min_d2 = 2.0, 4.0
+    elif design_esals <= 500000.0:
+        min_d1, min_d2 = 2.5, 4.0
+    elif design_esals <= 2000000.0:
+        min_d1, min_d2 = 3.0, 6.0
+    elif design_esals <= 7000000.0:
+        min_d1, min_d2 = 3.5, 6.0
+    else:
+        min_d1, min_d2 = 4.0, 6.0
+
+    thickness_ok = (d1_surface_in >= min_d1) and (d2_base_in >= min_d2)
+
+    # AASHTO standard normal deviate (Z_R) lookup
+    zr_table = {
+        50.0: 0.000,
+        70.0: -0.524,
+        75.0: -0.674,
+        80.0: -0.841,
+        85.0: -1.036,
+        90.0: -1.282,
+        95.0: -1.645,
+        98.0: -2.054,
+        99.0: -2.326,
+        99.9: -3.090,
+    }
+    if zr_override < 0.0:
+        zr = zr_override
+    elif reliability_pct in zr_table:
+        zr = zr_table[reliability_pct]
+    elif 50.0 <= reliability_pct <= 99.9:
+        # Piecewise interpolation for unlisted reliability values
+        sorted_keys = sorted(zr_table.keys())
+        idx = next(i for i, k in enumerate(sorted_keys) if k >= reliability_pct)
+        k_lower, k_upper = sorted_keys[idx - 1], sorted_keys[idx]
+        frac = (reliability_pct - k_lower) / (k_upper - k_lower)
+        zr = zr_table[k_lower] + frac * (zr_table[k_upper] - zr_table[k_lower])
+    else:
+        return {"pass": False, "reason": "invalid_reliability_percentage"}
+
+    # AASHTO structural number formulation: SN = a1*D1 + a2*D2*m2 + a3*D3*m3
+    sn = (
+        (a1_coeff * d1_surface_in)
+        + (a2_coeff * d2_base_in * m2_drainage)
+        + (a3_coeff * d3_subbase_in * m3_drainage)
+    )
+    if sn <= 0:
+        return {"pass": False, "reason": "zero_or_negative_structural_number"}
+
+    # AASHTO 1993 flexible pavement design equation for allowable 18-kip ESALs (W18)
+    delta_psi = initial_psi - terminal_psi
+    term_sn = sn + 1.0
+    term_psi_num = math.log10(delta_psi / (4.2 - 1.5))
+    term_psi_den = 0.40 + (1094.0 / (term_sn ** 5.19))
+    psi_term = term_psi_num / term_psi_den
+
+    log_w18 = (
+        zr * overall_std_dev
+        + 9.36 * math.log10(term_sn)
+        - 0.20
+        + psi_term
+        + 2.32 * math.log10(subgrade_resilient_modulus_psi)
+        - 8.07
+    )
+    w18_allowable = 10.0 ** log_w18
+    esal_dcr = design_esals / w18_allowable if w18_allowable > 0 else float("inf")
+    traffic_ok = esal_dcr <= 1.0
+
+    passed = traffic_ok and thickness_ok
+    return {
+        "pass": passed,
+        "dcr": round(esal_dcr, 4),
+        "structural_number": round(sn, 3),
+        "w18_allowable_esals": round(w18_allowable, 1),
+        "design_esals": round(design_esals, 1),
+        "min_surface_thickness_in": min_d1,
+        "min_base_thickness_in": min_d2,
+        "traffic_ok": traffic_ok,
+        "thickness_ok": thickness_ok,
+    }

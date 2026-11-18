@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aashto_pavement_structural_number,
     verify_nec_dwelling_service_load,
     verify_ashrae_expansion_tank_sizing,
     verify_cooling_tower_performance,
@@ -4749,6 +4750,87 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_factor["pass"])
         self.assertEqual(res_inv_factor["reason"], "invalid_heating_demand_factor")
+
+
+    def test_aashto_pavement_structural_number(self) -> None:
+        from harness.verifiers import verify_aashto_pavement_structural_number
+
+        # Standard passing flexible pavement design for medium-high traffic collector
+        res_pass = verify_aashto_pavement_structural_number(
+            design_esals=400000.0,
+            d1_surface_in=3.5,
+            d2_base_in=8.0,
+            d3_subbase_in=6.0,
+            a1_coeff=0.44,
+            a2_coeff=0.14,
+            a3_coeff=0.11,
+            m2_drainage=1.0,
+            m3_drainage=1.0,
+            subgrade_resilient_modulus_psi=7500.0,
+            reliability_pct=95.0,
+            overall_std_dev=0.45,
+            initial_psi=4.2,
+            terminal_psi=2.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["structural_number"], 3.32)
+        self.assertTrue(res_pass["thickness_ok"])
+        self.assertTrue(res_pass["traffic_ok"])
+        self.assertAlmostEqual(res_pass["dcr"], 400000.0 / res_pass["w18_allowable_esals"], places=3)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Inadequate layer thickness failing code minimum constraint (D1 < min_d1)
+        res_thin = verify_aashto_pavement_structural_number(
+            design_esals=3000000.0,
+            d1_surface_in=2.5,
+            d2_base_in=8.0,
+            d3_subbase_in=6.0,
+        )
+        self.assertFalse(res_thin["pass"])
+        self.assertFalse(res_thin["thickness_ok"])
+        self.assertEqual(res_thin["min_surface_thickness_in"], 3.5)
+
+        # Traffic overload exceeding allowable structural capacity (DCR > 1.0)
+        res_overload = verify_aashto_pavement_structural_number(
+            design_esals=2500000.0,
+            d1_surface_in=3.5,
+            d2_base_in=6.0,
+            d3_subbase_in=4.0,
+            subgrade_resilient_modulus_psi=4000.0,
+            reliability_pct=95.0,
+        )
+        self.assertFalse(res_overload["pass"])
+        self.assertFalse(res_overload["traffic_ok"])
+        self.assertGreater(res_overload["dcr"], 1.0)
+
+        # Serviceability input inversion error
+        res_psi_err = verify_aashto_pavement_structural_number(
+            design_esals=100000.0,
+            d1_surface_in=3.0,
+            d2_base_in=6.0,
+            initial_psi=2.5,
+            terminal_psi=3.0,
+        )
+        self.assertFalse(res_psi_err["pass"])
+        self.assertEqual(res_psi_err["reason"], "initial_serviceability_not_above_terminal")
+
+        # NaN input error validation
+        res_nan = verify_aashto_pavement_structural_number(
+            design_esals=float("nan"),
+            d1_surface_in=3.0,
+            d2_base_in=6.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Non-positive input validation
+        res_neg = verify_aashto_pavement_structural_number(
+            design_esals=-50000.0,
+            d1_surface_in=3.0,
+            d2_base_in=6.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_traffic")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+{
+  "score": 65.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aashto_pavement_structural_number",
+    "rationale": "Implements the AASHTO 1993 empirical flexible pavement design methodology to verify structural number (SN), allowable 18-kip equivalent single axle load (ESAL) capacity, and minimum layer thickness constraints against high-volume traffic demand.",
+    "model": "gemini-3.8-flash"
+  }
+}
