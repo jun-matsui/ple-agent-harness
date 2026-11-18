@@ -2772,3 +2772,95 @@ def verify_asce7_seismic_force_distribution(
         "story_shears_kips": [round(v, 2) for v in story_shears],
         "story_dcrs": [round(d, 4) for d in story_dcrs],
     }
+
+
+def verify_asme_b313_pipe_thickness(
+    design_pressure_psi: float,
+    outer_diameter_in: float,
+    nominal_wall_thickness_in: float,
+    allowable_stress_psi: float = 20000.0,
+    weld_efficiency_e: float = 1.0,
+    corrosion_allowance_in: float = 0.0625,
+    mechanical_allowance_in: float = 0.0,
+    mill_tolerance_pct: float = 12.5,
+    y_coefficient: float = 0.40,
+    w_factor: float = 1.0,
+) -> Dict[str, Any]:
+    """ASME B31.3 Section 304.1.2 straight metallic pipe wall thickness and MAWP check."""
+    inputs = [
+        design_pressure_psi,
+        outer_diameter_in,
+        nominal_wall_thickness_in,
+        allowable_stress_psi,
+        weld_efficiency_e,
+        corrosion_allowance_in,
+        mechanical_allowance_in,
+        mill_tolerance_pct,
+        y_coefficient,
+        w_factor,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            design_pressure_psi,
+            outer_diameter_in,
+            nominal_wall_thickness_in,
+            allowable_stress_psi,
+            w_factor,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_pressure_or_dimensions"}
+    if corrosion_allowance_in < 0 or mechanical_allowance_in < 0:
+        return {"pass": False, "reason": "negative_allowance"}
+    if not (0.0 < weld_efficiency_e <= 1.0):
+        return {"pass": False, "reason": "invalid_weld_efficiency"}
+    if not (0.0 <= mill_tolerance_pct < 100.0):
+        return {"pass": False, "reason": "invalid_mill_tolerance"}
+    if not (0.0 <= y_coefficient <= 1.0):
+        return {"pass": False, "reason": "invalid_y_coefficient"}
+    if nominal_wall_thickness_in >= (outer_diameter_in / 2.0):
+        return {"pass": False, "reason": "wall_thickness_exceeds_radius"}
+
+    # ASME B31.3 Eq. 3a pressure design thickness t
+    denom = 2.0 * (allowable_stress_psi * weld_efficiency_e * w_factor + design_pressure_psi * y_coefficient)
+    if denom <= 0:
+        return {"pass": False, "reason": "invalid_stress_pressure_combination"}
+    t_press_in = (design_pressure_psi * outer_diameter_in) / denom
+
+    total_allowance_in = corrosion_allowance_in + mechanical_allowance_in
+    t_min_req_in = t_press_in + total_allowance_in
+
+    mill_factor = 1.0 - (mill_tolerance_pct / 100.0)
+    t_nom_req_in = t_min_req_in / mill_factor
+
+    # Effective corroded available wall thickness
+    t_avail_min_in = nominal_wall_thickness_in * mill_factor
+    t_eff_in = t_avail_min_in - total_allowance_in
+    if t_eff_in <= 0:
+        return {
+            "pass": False,
+            "reason": "allowances_exceed_available_thickness",
+            "t_avail_min_in": round(t_avail_min_in, 4),
+            "total_allowance_in": round(total_allowance_in, 4),
+        }
+
+    # Maximum Allowable Working Pressure (MAWP) for pipe
+    mawp_denom = outer_diameter_in - 2.0 * y_coefficient * t_eff_in
+    if mawp_denom <= 0:
+        return {"pass": False, "reason": "invalid_geometry_for_mawp"}
+    mawp_psi = (2.0 * allowable_stress_psi * weld_efficiency_e * w_factor * t_eff_in) / mawp_denom
+
+    dcr = t_nom_req_in / nominal_wall_thickness_in
+    passed = (dcr <= 1.0) and (design_pressure_psi <= mawp_psi)
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "t_nom_required_in": round(t_nom_req_in, 4),
+        "t_min_required_in": round(t_min_req_in, 4),
+        "t_pressure_in": round(t_press_in, 4),
+        "mawp_psi": round(mawp_psi, 2),
+        "effective_thickness_in": round(t_eff_in, 4),
+    }

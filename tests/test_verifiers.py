@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asme_b313_pipe_thickness,
     verify_asce7_seismic_force_distribution,
     verify_aisc_web_local_yielding_and_crippling,
     verify_aisc_unbraced_beam_flexure,
@@ -2708,6 +2709,74 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_nan["pass"])
         self.assertEqual(res_nan["reason"], "nan_input")
+
+
+    def test_asme_b313_pipe_thickness(self) -> None:
+        from harness.verifiers import verify_asme_b313_pipe_thickness
+
+        # 6-inch NPS Schedule 40 carbon steel pipe passing at 500 psi
+        res_pass = verify_asme_b313_pipe_thickness(
+            design_pressure_psi=500.0,
+            outer_diameter_in=6.625,
+            nominal_wall_thickness_in=0.280,
+            allowable_stress_psi=20000.0,
+            weld_efficiency_e=1.0,
+            corrosion_allowance_in=0.0625,
+            mechanical_allowance_in=0.0,
+            mill_tolerance_pct=12.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["t_pressure_in"], 0.082, places=3)
+        self.assertAlmostEqual(res_pass["t_nom_required_in"], 0.1651, places=3)
+        self.assertAlmostEqual(res_pass["dcr"], 0.5898, places=3)
+        self.assertGreater(res_pass["mawp_psi"], 500.0)
+
+        # Overpressured case (1500 psi on Schedule 40) failing thickness requirement
+        res_fail_press = verify_asme_b313_pipe_thickness(
+            design_pressure_psi=1500.0,
+            outer_diameter_in=6.625,
+            nominal_wall_thickness_in=0.280,
+            allowable_stress_psi=20000.0,
+        )
+        self.assertFalse(res_fail_press["pass"])
+        self.assertGreater(res_fail_press["dcr"], 1.0)
+        self.assertLess(res_fail_press["mawp_psi"], 1500.0)
+
+        # Excessive corrosion allowance consuming available wall thickness
+        res_corr_err = verify_asme_b313_pipe_thickness(
+            design_pressure_psi=200.0,
+            outer_diameter_in=6.625,
+            nominal_wall_thickness_in=0.280,
+            corrosion_allowance_in=0.30,
+        )
+        self.assertFalse(res_corr_err["pass"])
+        self.assertEqual(res_corr_err["reason"], "allowances_exceed_available_thickness")
+
+        # Input error validation checks
+        res_nan = verify_asme_b313_pipe_thickness(
+            design_pressure_psi=float("nan"),
+            outer_diameter_in=6.625,
+            nominal_wall_thickness_in=0.280,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_asme_b313_pipe_thickness(
+            design_pressure_psi=-100.0,
+            outer_diameter_in=6.625,
+            nominal_wall_thickness_in=0.280,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_pressure_or_dimensions")
+
+        res_inv_e = verify_asme_b313_pipe_thickness(
+            design_pressure_psi=500.0,
+            outer_diameter_in=6.625,
+            nominal_wall_thickness_in=0.280,
+            weld_efficiency_e=1.2,
+        )
+        self.assertFalse(res_inv_e["pass"])
+        self.assertEqual(res_inv_e["reason"], "invalid_weld_efficiency")
 
 
 if __name__ == "__main__":

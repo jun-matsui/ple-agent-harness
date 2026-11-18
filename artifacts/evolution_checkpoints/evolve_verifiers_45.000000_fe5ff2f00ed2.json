@@ -1,0 +1,9 @@
+{
+  "score": 45.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asme_b313_pipe_thickness",
+    "rationale": "Fills a critical Mechanical PE (HVAC, process piping, and central plant) verification gap by validating metallic pressure piping nominal wall thickness and MAWP against ASME B31.3 Chapter II Section 304.1.2 requirements, including mechanical/corrosion allowances and mill undertolerance.",
+    "model": "gemini-3.8-flash"
+  }
+}
