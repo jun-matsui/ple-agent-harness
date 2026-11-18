@@ -1,0 +1,9 @@
+{
+  "score": 31.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_punching_shear",
+    "rationale": "ACI 318-19 Table 22.6.5.2 & Section 22.5.5.1.3 two-way punching shear capacity check with size effect factor (lambda_s), aspect ratio beta, and perimeter location coefficient alpha_s is one of the most critical and frequently tested failure gates in reinforced concrete foundations and flat slab structures.",
+    "model": "gemini-3.8-flash"
+  }
+}

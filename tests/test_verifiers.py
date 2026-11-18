@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_punching_shear,
     verify_stormwater_rational_runoff,
     verify_nec_motor_branch_circuit,
     verify_clay_consolidation_settlement,
@@ -1460,6 +1461,89 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_coeff_err["pass"])
         self.assertEqual(res_coeff_err["reason"], "invalid_runoff_coefficient")
+
+
+    def test_aci_punching_shear(self) -> None:
+        from harness.verifiers import verify_aci_punching_shear
+
+        res_pass = verify_aci_punching_shear(
+            vu_kips=120.0,
+            c1_in=16.0,
+            c2_in=16.0,
+            d_in=8.0,
+            fc_psi=4000.0,
+            column_location="interior",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertEqual(res_pass["b0_in"], 96.0)
+        self.assertEqual(res_pass["lambda_s"], 1.0)
+        self.assertEqual(res_pass["governing_equation"], "4_sqrt_fc")
+        self.assertAlmostEqual(res_pass["phi_vn_kips"], 145.72, places=1)
+
+        res_beta_gov = verify_aci_punching_shear(
+            vu_kips=150.0,
+            c1_in=12.0,
+            c2_in=48.0,
+            d_in=8.0,
+            fc_psi=4000.0,
+            column_location="interior",
+        )
+        self.assertEqual(res_beta_gov["governing_equation"], "aspect_ratio_beta")
+        self.assertEqual(res_beta_gov["beta"], 4.0)
+
+        res_thick_slab = verify_aci_punching_shear(
+            vu_kips=200.0,
+            c1_in=18.0,
+            c2_in=18.0,
+            d_in=20.0,
+            fc_psi=4000.0,
+            column_location="interior",
+        )
+        self.assertLess(res_thick_slab["lambda_s"], 1.0)
+        self.assertAlmostEqual(res_thick_slab["lambda_s"], (2.0 / 3.0) ** 0.5, places=3)
+
+        res_fail_overload = verify_aci_punching_shear(
+            vu_kips=200.0,
+            c1_in=16.0,
+            c2_in=16.0,
+            d_in=8.0,
+            fc_psi=4000.0,
+            column_location="interior",
+        )
+        self.assertFalse(res_fail_overload["pass"])
+        self.assertGreater(res_fail_overload["dcr"], 1.0)
+
+        res_nan = verify_aci_punching_shear(
+            vu_kips=float("nan"),
+            c1_in=16.0,
+            c2_in=16.0,
+            d_in=8.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_punching_shear(
+            vu_kips=-50.0,
+            c1_in=16.0,
+            c2_in=16.0,
+            d_in=8.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_inv_loc = verify_aci_punching_shear(
+            vu_kips=100.0,
+            c1_in=16.0,
+            c2_in=16.0,
+            d_in=8.0,
+            fc_psi=4000.0,
+            column_location="cantilever",
+        )
+        self.assertFalse(res_inv_loc["pass"])
+        self.assertEqual(res_inv_loc["reason"], "invalid_column_location")
 
 
 if __name__ == "__main__":

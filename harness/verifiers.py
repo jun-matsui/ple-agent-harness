@@ -1577,3 +1577,79 @@ def verify_stormwater_rational_runoff(
         "design_c": round(design_c, 4),
         "total_area_acres": round(total_area_acres, 3),
     }
+
+
+def verify_aci_punching_shear(
+    vu_kips: float,
+    c1_in: float,
+    c2_in: float,
+    d_in: float,
+    fc_psi: float,
+    column_location: str = "interior",
+    bo_in: float = 0.0,
+    lambda_factor: float = 1.0,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 22.6 two-way slab punching shear capacity and size effect check."""
+    scalars = [vu_kips, c1_in, c2_in, d_in, fc_psi, bo_in, lambda_factor, phi]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if vu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if bo_in < 0:
+        return {"pass": False, "reason": "negative_perimeter_input"}
+    if min(c1_in, c2_in, d_in, fc_psi, lambda_factor, phi) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+
+    loc = column_location.strip().lower()
+    alpha_map: Dict[str, float] = {"interior": 40.0, "edge": 30.0, "corner": 20.0}
+    if loc not in alpha_map:
+        return {"pass": False, "reason": "invalid_column_location"}
+    alpha_s = alpha_map[loc]
+
+    # Calculate critical perimeter b0 at d/2 if not explicitly overridden
+    if bo_in > 0.0:
+        b0 = bo_in
+    else:
+        if loc == "interior":
+            b0 = 2.0 * (c1_in + d_in) + 2.0 * (c2_in + d_in)
+        elif loc == "edge":
+            b0 = 2.0 * (c1_in + d_in / 2.0) + (c2_in + d_in)
+        else:  # corner
+            b0 = (c1_in + d_in / 2.0) + (c2_in + d_in / 2.0)
+
+    beta = max(c1_in, c2_in) / min(c1_in, c2_in)
+    sqrt_fc = math.sqrt(fc_psi)
+
+    # ACI 318-19 Section 22.5.5.1.3 size effect factor lambda_s
+    lambda_s = min(1.0, math.sqrt(2.0 / (1.0 + 0.10 * d_in)))
+
+    # ACI 318-19 Table 22.6.5.2 two-way shear stress equations
+    vc1 = 4.0 * lambda_s * lambda_factor * sqrt_fc
+    vc2 = (2.0 + 4.0 / beta) * lambda_s * lambda_factor * sqrt_fc
+    vc3 = ((alpha_s * d_in / b0) + 2.0) * lambda_s * lambda_factor * sqrt_fc
+
+    vc = min(vc1, vc2, vc3)
+    if vc == vc1:
+        governing_eq = "4_sqrt_fc"
+    elif vc == vc2:
+        governing_eq = "aspect_ratio_beta"
+    else:
+        governing_eq = "perimeter_alpha_s"
+
+    vn_kips = (vc * b0 * d_in) / 1000.0
+    phi_vn_kips = phi * vn_kips
+    dcr = vu_kips / phi_vn_kips if phi_vn_kips > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_vn_kips": round(phi_vn_kips, 2),
+        "vn_kips": round(vn_kips, 2),
+        "vc_psi": round(vc, 2),
+        "b0_in": round(b0, 2),
+        "beta": round(beta, 3),
+        "lambda_s": round(lambda_s, 4),
+        "governing_equation": governing_eq,
+    }
