@@ -3062,3 +3062,84 @@ def verify_aashto_horizontal_curve(
         "hso_required_ft": round(hso_required_ft, 2) if hso_required_ft is not None else None,
         "hso_dcr": round(hso_dcr, 4) if hso_dcr is not None else None,
     }
+
+
+def verify_nec_equipment_grounding_conductor(
+    ocpd_rating_a: float,
+    egc_provided_kcmil: float,
+    egc_material: str = "copper",
+    actual_ungrounded_kcmil: float = 0.0,
+    min_ungrounded_kcmil: float = 0.0,
+) -> Dict[str, Any]:
+    """NEC 250.122 Equipment Grounding Conductor (EGC) sizing and 250.122(B) proportional upsize gate."""
+    scalars = [ocpd_rating_a, egc_provided_kcmil, actual_ungrounded_kcmil, min_ungrounded_kcmil]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if ocpd_rating_a <= 0 or egc_provided_kcmil <= 0:
+        return {"pass": False, "reason": "non_positive_rating_or_area"}
+    if actual_ungrounded_kcmil < 0 or min_ungrounded_kcmil < 0:
+        return {"pass": False, "reason": "negative_conductor_area"}
+
+    g_mat = egc_material.strip().lower()
+    valid_materials = {"copper", "cu", "aluminum", "al"}
+    if g_mat not in valid_materials:
+        return {"pass": False, "reason": "invalid_conductor_material"}
+    is_cu = g_mat in {"copper", "cu"}
+
+    if (actual_ungrounded_kcmil > 0.0) ^ (min_ungrounded_kcmil > 0.0):
+        return {"pass": False, "reason": "incomplete_ungrounded_conductor_data"}
+    if actual_ungrounded_kcmil > 0.0 and actual_ungrounded_kcmil < min_ungrounded_kcmil:
+        return {"pass": False, "reason": "actual_area_less_than_minimum"}
+
+    # NEC Table 250.122 standard thresholds: (max_ocpd_a, cu_kcmil, al_kcmil)
+    table_250_122 = [
+        (15.0, 4.11, 6.53),
+        (20.0, 6.53, 10.38),
+        (60.0, 10.38, 16.51),
+        (100.0, 16.51, 26.24),
+        (200.0, 26.24, 41.74),
+        (300.0, 41.74, 66.36),
+        (400.0, 52.62, 83.69),
+        (500.0, 66.36, 105.6),
+        (600.0, 83.69, 133.1),
+        (800.0, 105.6, 167.8),
+        (1000.0, 133.1, 211.6),
+        (1200.0, 167.8, 250.0),
+        (1600.0, 211.6, 350.0),
+        (2000.0, 250.0, 400.0),
+        (2500.0, 350.0, 600.0),
+        (3000.0, 400.0, 600.0),
+        (4000.0, 500.0, 750.0),
+        (5000.0, 700.0, 1200.0),
+        (6000.0, 800.0, 1200.0),
+    ]
+
+    if ocpd_rating_a > 6000.0:
+        return {"pass": False, "reason": "ocpd_exceeds_code_table"}
+
+    base_egc_kcmil = 0.0
+    for limit_a, cu_area, al_area in table_250_122:
+        if ocpd_rating_a <= limit_a:
+            base_egc_kcmil = cu_area if is_cu else al_area
+            break
+
+    # NEC 250.122(B) proportional adjustment for upsized phase conductors
+    if actual_ungrounded_kcmil > 0.0 and min_ungrounded_kcmil > 0.0:
+        growth_ratio = actual_ungrounded_kcmil / min_ungrounded_kcmil
+        required_egc_kcmil = base_egc_kcmil * max(1.0, growth_ratio)
+    else:
+        growth_ratio = 1.0
+        required_egc_kcmil = base_egc_kcmil
+
+    dcr = required_egc_kcmil / egc_provided_kcmil
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "required_egc_kcmil": round(required_egc_kcmil, 2),
+        "base_egc_kcmil": round(base_egc_kcmil, 2),
+        "provided_egc_kcmil": round(egc_provided_kcmil, 2),
+        "upsize_ratio": round(growth_ratio, 4),
+        "egc_material": g_mat,
+    }

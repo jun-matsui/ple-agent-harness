@@ -1,0 +1,9 @@
+{
+  "score": 48.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_equipment_grounding_conductor",
+    "rationale": "Applies NEC 250.122 minimum Equipment Grounding Conductor (EGC) sizing across standard OCPD ratings and enforces the mandatory NEC 250.122(B) circular-mil proportional upsizing rule when phase conductors are enlarged for voltage drop.",
+    "model": "gemini-3.8-flash"
+  }
+}

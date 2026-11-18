@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_equipment_grounding_conductor,
     verify_aashto_horizontal_curve,
     verify_meyerhof_bearing_capacity,
     verify_asme_b313_pipe_thickness,
@@ -2934,6 +2935,91 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_speed_or_geometry")
+
+
+    def test_nec_equipment_grounding_conductor(self) -> None:
+        from harness.verifiers import verify_nec_equipment_grounding_conductor
+
+        # Standard 100A OCPD with 8 AWG Cu (16.51 kcmil) -> Pass
+        res_pass = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=100.0,
+            egc_provided_kcmil=16.51,
+            egc_material="copper",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["dcr"], 1.0, places=3)
+        self.assertEqual(res_pass["base_egc_kcmil"], 16.51)
+        self.assertEqual(res_pass["upsize_ratio"], 1.0)
+
+        # 100A OCPD with undersized 10 AWG Cu (10.38 kcmil) -> Fail
+        res_fail = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=100.0,
+            egc_provided_kcmil=10.38,
+            egc_material="copper",
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # NEC 250.122(B) proportional upsize test: 200A feeder upsized from 167.8 to 250.0 kcmil
+        # Base Cu EGC is 6 AWG (26.24 kcmil). Required = 26.24 * (250/167.8) = 39.09 kcmil
+        res_upsize_fail = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=200.0,
+            egc_provided_kcmil=26.24,
+            actual_ungrounded_kcmil=250.0,
+            min_ungrounded_kcmil=167.8,
+        )
+        self.assertFalse(res_upsize_fail["pass"])
+        self.assertAlmostEqual(res_upsize_fail["required_egc_kcmil"], 39.09, places=1)
+        self.assertGreater(res_upsize_fail["dcr"], 1.0)
+
+        # Supplying 4 AWG Cu (41.74 kcmil) satisfies upsized requirement
+        res_upsize_pass = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=200.0,
+            egc_provided_kcmil=41.74,
+            actual_ungrounded_kcmil=250.0,
+            min_ungrounded_kcmil=167.8,
+        )
+        self.assertTrue(res_upsize_pass["pass"])
+        self.assertLess(res_upsize_pass["dcr"], 1.0)
+
+        # Aluminum EGC check: 400A OCPD -> 1 AWG Al (83.69 kcmil)
+        res_al = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=400.0,
+            egc_provided_kcmil=83.69,
+            egc_material="aluminum",
+        )
+        self.assertTrue(res_al["pass"])
+        self.assertEqual(res_al["base_egc_kcmil"], 83.69)
+
+        # Input error validation
+        res_nan = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=float("nan"),
+            egc_provided_kcmil=16.51,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=-100.0,
+            egc_provided_kcmil=16.51,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_rating_or_area")
+
+        res_mat = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=100.0,
+            egc_provided_kcmil=16.51,
+            egc_material="steel",
+        )
+        self.assertFalse(res_mat["pass"])
+        self.assertEqual(res_mat["reason"], "invalid_conductor_material")
+
+        res_table_exceed = verify_nec_equipment_grounding_conductor(
+            ocpd_rating_a=8000.0,
+            egc_provided_kcmil=1000.0,
+        )
+        self.assertFalse(res_table_exceed["pass"])
+        self.assertEqual(res_table_exceed["reason"], "ocpd_exceeds_code_table")
 
 
 if __name__ == "__main__":
