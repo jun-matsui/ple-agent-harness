@@ -2976,3 +2976,89 @@ def verify_meyerhof_bearing_capacity(
         "effective_width_ft": round(b_eff, 2),
         "effective_length_ft": round(l_eff, 2),
     }
+
+
+def verify_aashto_horizontal_curve(
+    design_speed_mph: float,
+    radius_ft: float,
+    superelevation_pct: float,
+    max_superelevation_pct: float = 8.0,
+    f_max_override: float = 0.0,
+    ssd_ft: float = 0.0,
+    hso_provided_ft: float = 0.0,
+) -> Dict[str, Any]:
+    """AASHTO Green Book horizontal curve radius, side friction, superelevation, and sightline offset (HSO) check."""
+    scalars = [
+        design_speed_mph,
+        radius_ft,
+        superelevation_pct,
+        max_superelevation_pct,
+        f_max_override,
+        ssd_ft,
+        hso_provided_ft,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if min(design_speed_mph, radius_ft, max_superelevation_pct) <= 0:
+        return {"pass": False, "reason": "non_positive_speed_or_geometry"}
+    if superelevation_pct < 0:
+        return {"pass": False, "reason": "negative_superelevation"}
+    if f_max_override < 0:
+        return {"pass": False, "reason": "negative_friction_factor"}
+    if ssd_ft < 0 or hso_provided_ft < 0:
+        return {"pass": False, "reason": "negative_sight_distance_or_offset"}
+
+    # AASHTO Table 3-7 maximum side friction factor f_max as a function of design speed
+    if f_max_override > 0.0:
+        f_max = f_max_override
+    elif design_speed_mph <= 50.0:
+        f_max = 0.19 - 0.001 * design_speed_mph
+    else:
+        f_max = max(0.14 - 0.002 * (design_speed_mph - 50.0), 0.05)
+
+    e_max = max_superelevation_pct / 100.0
+    e_actual = superelevation_pct / 100.0
+
+    # AASHTO Eq. 3-6: Minimum curve radius R_min = V^2 / (15 * (e_max + f_max))
+    r_min_ft = (design_speed_mph**2) / (15.0 * (e_max + f_max))
+    radius_dcr = r_min_ft / radius_ft
+
+    # Side friction demand f_demand = V^2 / (15 * R) - e
+    f_demand = (design_speed_mph**2) / (15.0 * radius_ft) - e_actual
+    friction_dcr = (f_demand / f_max) if f_max > 0 else float("inf")
+    superelev_dcr = superelevation_pct / max_superelevation_pct
+
+    # AASHTO Eq. 3-36: Horizontal Sightline Offset (HSO / Middle Ordinate M)
+    hso_required_ft = None
+    hso_dcr = None
+    hso_ok = True
+    if ssd_ft > 0.0:
+        half_angle_deg = (28.64788975654116 * ssd_ft) / radius_ft
+        if half_angle_deg >= 90.0:
+            return {"pass": False, "reason": "sight_distance_subtends_excessive_angle"}
+        hso_required_ft = radius_ft * (1.0 - math.cos(math.radians(half_angle_deg)))
+        if hso_provided_ft > 0.0:
+            hso_dcr = hso_required_ft / hso_provided_ft
+            hso_ok = hso_dcr <= 1.0
+
+    dcr_components = [radius_dcr, friction_dcr, superelev_dcr]
+    if hso_dcr is not None:
+        dcr_components.append(hso_dcr)
+    gov_dcr = max(dcr_components)
+
+    passed = (
+        (radius_ft >= r_min_ft)
+        and (f_demand <= f_max)
+        and (superelevation_pct <= max_superelevation_pct)
+        and hso_ok
+    )
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "r_min_ft": round(r_min_ft, 2),
+        "f_max": round(f_max, 4),
+        "f_demand": round(f_demand, 4),
+        "hso_required_ft": round(hso_required_ft, 2) if hso_required_ft is not None else None,
+        "hso_dcr": round(hso_dcr, 4) if hso_dcr is not None else None,
+    }

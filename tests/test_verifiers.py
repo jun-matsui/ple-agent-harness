@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aashto_horizontal_curve,
     verify_meyerhof_bearing_capacity,
     verify_asme_b313_pipe_thickness,
     verify_asce7_seismic_force_distribution,
@@ -2864,6 +2865,75 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_input")
+
+
+    def test_aashto_horizontal_curve(self) -> None:
+        from harness.verifiers import verify_aashto_horizontal_curve
+
+        # Standard passing highway curve with adequate HSO
+        res_pass = verify_aashto_horizontal_curve(
+            design_speed_mph=50.0,
+            radius_ft=850.0,
+            superelevation_pct=6.0,
+            max_superelevation_pct=8.0,
+            ssd_ft=425.0,
+            hso_provided_ft=30.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["f_max"], 0.14, places=2)
+        self.assertAlmostEqual(res_pass["r_min_ft"], 757.58, places=1)
+        self.assertAlmostEqual(res_pass["f_demand"], 0.1361, places=3)
+        self.assertAlmostEqual(res_pass["hso_required_ft"], 26.42, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Inadequate curve radius failing minimum radius check
+        res_fail_r = verify_aashto_horizontal_curve(
+            design_speed_mph=60.0,
+            radius_ft=1000.0,
+            superelevation_pct=6.0,
+            max_superelevation_pct=6.0,
+        )
+        self.assertFalse(res_fail_r["pass"])
+        self.assertGreater(res_fail_r["dcr"], 1.0)
+        self.assertAlmostEqual(res_fail_r["r_min_ft"], 1333.33, places=1)
+
+        # Insufficient horizontal sightline offset (sight obstruction) failure
+        res_fail_hso = verify_aashto_horizontal_curve(
+            design_speed_mph=50.0,
+            radius_ft=850.0,
+            superelevation_pct=6.0,
+            ssd_ft=425.0,
+            hso_provided_ft=20.0,
+        )
+        self.assertFalse(res_fail_hso["pass"])
+        self.assertGreater(res_fail_hso["hso_dcr"], 1.0)
+
+        # Superelevation exceeding allowable maximum
+        res_fail_e = verify_aashto_horizontal_curve(
+            design_speed_mph=45.0,
+            radius_ft=900.0,
+            superelevation_pct=9.0,
+            max_superelevation_pct=8.0,
+        )
+        self.assertFalse(res_fail_e["pass"])
+        self.assertGreater(res_fail_e["dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_aashto_horizontal_curve(
+            design_speed_mph=float("nan"),
+            radius_ft=850.0,
+            superelevation_pct=6.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aashto_horizontal_curve(
+            design_speed_mph=-50.0,
+            radius_ft=850.0,
+            superelevation_pct=6.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_speed_or_geometry")
 
 
 if __name__ == "__main__":

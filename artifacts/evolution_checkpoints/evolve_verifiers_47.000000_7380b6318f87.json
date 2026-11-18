@@ -1,0 +1,9 @@
+{
+  "score": 47.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aashto_horizontal_curve",
+    "rationale": "Appends AASHTO Green Book horizontal curve design verification covering minimum radius, maximum side friction factor (Table 3-7), superelevation rate, and horizontal sightline offset (HSO / Middle Ordinate), addressing high-frequency Civil/Transportation PE exam design-gate gaps.",
+    "model": "gemini-3.8-flash"
+  }
+}
