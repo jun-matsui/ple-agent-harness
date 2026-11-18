@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nfpa92_stairwell_pressurization,
     verify_open_channel_trapezoidal_flow,
     verify_weir_discharge_capacity,
     verify_water_hammer_surge,
@@ -4300,6 +4301,114 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_limits["pass"])
         self.assertEqual(res_inv_limits["reason"], "invalid_velocity_limits")
+
+
+    def test_nfpa92_stairwell_pressurization(self) -> None:
+        from harness.verifiers import verify_nfpa92_stairwell_pressurization
+
+        # Standard passing stairwell pressurization check in sprinklered high-rise
+        res_pass = verify_nfpa92_stairwell_pressurization(
+            design_pressure_diff_in_wg=0.15,
+            door_width_in=36.0,
+            door_height_in=84.0,
+            door_closer_force_lbf=12.0,
+            fan_airflow_cfm=14000.0,
+            num_open_doors=2,
+            num_closed_doors=10,
+            open_door_velocity_fpm=200.0,
+            leakage_area_per_door_sqft=0.25,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["total_door_force_lbf"], 20.94, places=1)
+        self.assertAlmostEqual(res_pass["max_pressure_diff_in_wg"], 0.3019, places=2)
+        self.assertAlmostEqual(res_pass["q_open_doors_cfm"], 8400.0, places=1)
+        self.assertAlmostEqual(res_pass["q_leakage_doors_cfm"], 2527.13, places=1)
+        self.assertAlmostEqual(res_pass["q_required_cfm"], 12566.2, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["door_force_ok"])
+        self.assertTrue(res_pass["pressure_ok"])
+
+        # Overpressurization causing door opening force to exceed 30 lbf (IBC 1010.1.3 violation)
+        res_overpress = verify_nfpa92_stairwell_pressurization(
+            design_pressure_diff_in_wg=0.35,
+            door_width_in=36.0,
+            door_height_in=84.0,
+            door_closer_force_lbf=12.0,
+            fan_airflow_cfm=20000.0,
+        )
+        self.assertFalse(res_overpress["pass"])
+        self.assertFalse(res_overpress["door_force_ok"])
+        self.assertFalse(res_overpress["pressure_ok"])
+        self.assertGreater(res_overpress["total_door_force_lbf"], 30.0)
+
+        # Underpressurization failing minimum pressure difference boundary (dP < 0.10 in. wg)
+        res_underpress = verify_nfpa92_stairwell_pressurization(
+            design_pressure_diff_in_wg=0.06,
+            door_width_in=36.0,
+            door_height_in=84.0,
+            door_closer_force_lbf=10.0,
+            fan_airflow_cfm=14000.0,
+            min_pressure_diff_in_wg=0.10,
+        )
+        self.assertFalse(res_underpress["pass"])
+        self.assertFalse(res_underpress["pressure_ok"])
+
+        # Undersized fan airflow capacity failure
+        res_fan_fail = verify_nfpa92_stairwell_pressurization(
+            design_pressure_diff_in_wg=0.15,
+            door_width_in=36.0,
+            door_height_in=84.0,
+            door_closer_force_lbf=12.0,
+            fan_airflow_cfm=10000.0,
+            num_open_doors=2,
+            num_closed_doors=10,
+        )
+        self.assertFalse(res_fan_fail["pass"])
+        self.assertGreater(res_fan_fail["airflow_dcr"], 1.0)
+
+        # Door closer force alone exceeds allowable door opening force
+        res_closer_err = verify_nfpa92_stairwell_pressurization(
+            design_pressure_diff_in_wg=0.15,
+            door_width_in=36.0,
+            door_height_in=84.0,
+            door_closer_force_lbf=32.0,
+            fan_airflow_cfm=15000.0,
+            max_door_opening_force_lbf=30.0,
+        )
+        self.assertFalse(res_closer_err["pass"])
+        self.assertEqual(res_closer_err["reason"], "closer_force_exceeds_allowable_opening_force")
+
+        # Input error validation checks
+        res_nan = verify_nfpa92_stairwell_pressurization(
+            design_pressure_diff_in_wg=float("nan"),
+            door_width_in=36.0,
+            door_height_in=84.0,
+            door_closer_force_lbf=12.0,
+            fan_airflow_cfm=14000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nfpa92_stairwell_pressurization(
+            design_pressure_diff_in_wg=-0.15,
+            door_width_in=36.0,
+            door_height_in=84.0,
+            door_closer_force_lbf=12.0,
+            fan_airflow_cfm=14000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_pressure")
+
+        res_setback = verify_nfpa92_stairwell_pressurization(
+            design_pressure_diff_in_wg=0.15,
+            door_width_in=36.0,
+            door_height_in=84.0,
+            door_closer_force_lbf=12.0,
+            fan_airflow_cfm=14000.0,
+            latch_setback_in=40.0,
+        )
+        self.assertFalse(res_setback["pass"])
+        self.assertEqual(res_setback["reason"], "latch_setback_exceeds_door_width")
 
 
 if __name__ == "__main__":

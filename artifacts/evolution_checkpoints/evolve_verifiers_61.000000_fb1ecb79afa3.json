@@ -1,0 +1,9 @@
+{
+  "score": 61.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nfpa92_stairwell_pressurization",
+    "rationale": "Appends an essential deterministic Life Safety and Mechanical HVAC code-gate verifying NFPA 92 and IBC 909/1010 stairwell pressurization: minimum and maximum differential pressure boundaries, door unlatching opening forces, and total supply fan capacity with open door discharge and closed door leakage.",
+    "model": "gemini-3.8-flash"
+  }
+}

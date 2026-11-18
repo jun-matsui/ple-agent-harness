@@ -4353,3 +4353,108 @@ def verify_open_channel_trapezoidal_flow(
         "freeboard_ok": freeboard_ok,
         "shear_ok": shear_ok,
     }
+
+
+def verify_nfpa92_stairwell_pressurization(
+    design_pressure_diff_in_wg: float,
+    door_width_in: float,
+    door_height_in: float,
+    door_closer_force_lbf: float,
+    fan_airflow_cfm: float,
+    num_open_doors: int = 2,
+    num_closed_doors: int = 10,
+    open_door_velocity_fpm: float = 200.0,
+    leakage_area_per_door_sqft: float = 0.25,
+    latch_setback_in: float = 3.0,
+    min_pressure_diff_in_wg: float = 0.10,
+    max_door_opening_force_lbf: float = 30.0,
+    safety_factor: float = 1.15,
+) -> Dict[str, Any]:
+    """NFPA 92 / IBC 909 & 1010 stairwell pressurization differential pressure, door opening force, and fan airflow gate."""
+    scalars = [
+        design_pressure_diff_in_wg,
+        door_width_in,
+        door_height_in,
+        door_closer_force_lbf,
+        fan_airflow_cfm,
+        float(num_open_doors),
+        float(num_closed_doors),
+        open_door_velocity_fpm,
+        leakage_area_per_door_sqft,
+        latch_setback_in,
+        min_pressure_diff_in_wg,
+        max_door_opening_force_lbf,
+        safety_factor,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            design_pressure_diff_in_wg,
+            door_width_in,
+            door_height_in,
+            fan_airflow_cfm,
+            min_pressure_diff_in_wg,
+            max_door_opening_force_lbf,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_pressure"}
+    if door_closer_force_lbf < 0 or latch_setback_in < 0 or open_door_velocity_fpm < 0 or leakage_area_per_door_sqft < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+    if num_open_doors < 0 or num_closed_doors < 0:
+        return {"pass": False, "reason": "negative_door_count"}
+    if latch_setback_in >= door_width_in:
+        return {"pass": False, "reason": "latch_setback_exceeds_door_width"}
+    if door_closer_force_lbf >= max_door_opening_force_lbf:
+        return {"pass": False, "reason": "closer_force_exceeds_allowable_opening_force"}
+    if safety_factor < 1.0:
+        return {"pass": False, "reason": "invalid_safety_factor"}
+
+    # Door surface area in sqft
+    door_area_sqft = (door_width_in * door_height_in) / 144.0
+
+    # NFPA 92 Eq. 4.4.2.2 & IBC 909 door unlatching opening force (lbf)
+    # 1.0 in. w.g. = 5.204 psf
+    moment_arm_ratio = door_width_in / (2.0 * (door_width_in - latch_setback_in))
+    f_pressure_lbf = 5.204 * door_area_sqft * design_pressure_diff_in_wg * moment_arm_ratio
+    total_door_force_lbf = door_closer_force_lbf + f_pressure_lbf
+
+    # Maximum allowable pressure differential based on 30 lbf door opening force limit (IBC 1010.1.3)
+    allowable_pressure_force = max_door_opening_force_lbf - door_closer_force_lbf
+    max_allowed_pressure_diff_in_wg = allowable_pressure_force / (5.204 * door_area_sqft * moment_arm_ratio)
+
+    # Pressure differential compliance check
+    pressure_ok = min_pressure_diff_in_wg <= design_pressure_diff_in_wg <= max_allowed_pressure_diff_in_wg
+    door_force_ok = total_door_force_lbf <= max_door_opening_force_lbf
+
+    # Airflow through open egress doors (NFPA 92 Section 4.4.3.4)
+    q_open_doors_cfm = num_open_doors * door_area_sqft * open_door_velocity_fpm
+
+    # Leakage airflow across closed doors at design pressure diff (Q = 2610 * A * sqrt(dP))
+    q_leakage_doors_cfm = num_closed_doors * 2610.0 * leakage_area_per_door_sqft * math.sqrt(design_pressure_diff_in_wg)
+
+    # Total required design airflow including safety/duct leakage allowance
+    q_required_cfm = (q_open_doors_cfm + q_leakage_doors_cfm) * safety_factor
+
+    airflow_dcr = q_required_cfm / fan_airflow_cfm if fan_airflow_cfm > 0 else float("inf")
+    force_dcr = total_door_force_lbf / max_door_opening_force_lbf
+    pressure_min_dcr = min_pressure_diff_in_wg / design_pressure_diff_in_wg
+
+    gov_dcr = max(airflow_dcr, force_dcr, pressure_min_dcr)
+    passed = pressure_ok and door_force_ok and (airflow_dcr <= 1.0)
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "total_door_force_lbf": round(total_door_force_lbf, 2),
+        "max_allowed_door_force_lbf": round(max_door_opening_force_lbf, 2),
+        "max_pressure_diff_in_wg": round(max_allowed_pressure_diff_in_wg, 4),
+        "min_pressure_diff_in_wg": round(min_pressure_diff_in_wg, 4),
+        "q_required_cfm": round(q_required_cfm, 1),
+        "q_open_doors_cfm": round(q_open_doors_cfm, 1),
+        "q_leakage_doors_cfm": round(q_leakage_doors_cfm, 1),
+        "airflow_dcr": round(airflow_dcr, 4),
+        "door_force_ok": door_force_ok,
+        "pressure_ok": pressure_ok,
+    }
