@@ -1,0 +1,9 @@
+{
+  "score": 26.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_conduit_fill",
+    "rationale": "Conduit fill calculations per NEC Chapter 9 Table 1 and Note 4 (53% for 1 wire, 31% for 2 wires, 40% for 3+ wires, and 60% for short nipples <= 24 in.) represent high-frequency PLE electrical/MEP questions where physical wire pulling limits govern raceway sizing.",
+    "model": "gemini-3.8-flash"
+  }
+}

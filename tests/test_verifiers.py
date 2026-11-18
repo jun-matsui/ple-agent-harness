@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_conduit_fill,
     verify_aisc_fillet_weld,
     verify_nec_solar_busbar_interconnection,
     verify_asce7_wind_pressure,
@@ -1023,6 +1024,82 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_angle["pass"])
         self.assertEqual(res_inv_angle["reason"], "invalid_load_angle")
+
+
+    def test_nec_conduit_fill(self) -> None:
+        from harness.verifiers import verify_nec_conduit_fill
+
+        res_pass = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=1.049,
+            conductor_diameters_in=[0.30, 0.30, 0.30],
+            conduit_length_in=120.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["allowable_fill_pct"], 40.0)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertEqual(res_pass["conductor_count"], 3)
+
+        res_fail = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=1.049,
+            conductor_diameters_in=[0.40, 0.40, 0.40, 0.40],
+            conduit_length_in=120.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+        self.assertEqual(res_fail["allowable_fill_pct"], 40.0)
+
+        res_nipple = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=1.049,
+            conductor_diameters_in=[0.40, 0.40, 0.40, 0.40],
+            conduit_length_in=20.0,
+        )
+        self.assertTrue(res_nipple["pass"])
+        self.assertEqual(res_nipple["allowable_fill_pct"], 60.0)
+        self.assertLess(res_nipple["dcr"], 1.0)
+
+        res_two = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=1.049,
+            conductor_diameters_in=[0.45, 0.45],
+            conduit_length_in=60.0,
+        )
+        self.assertFalse(res_two["pass"])
+        self.assertEqual(res_two["allowable_fill_pct"], 31.0)
+
+        res_one = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=1.049,
+            conductor_diameters_in=[0.60],
+            conduit_length_in=60.0,
+        )
+        self.assertTrue(res_one["pass"])
+        self.assertEqual(res_one["allowable_fill_pct"], 53.0)
+
+        res_exceed = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=1.0,
+            conductor_diameters_in=[1.25],
+        )
+        self.assertFalse(res_exceed["pass"])
+        self.assertEqual(res_exceed["reason"], "conductor_exceeds_conduit_diameter")
+
+        res_empty = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=1.049,
+            conductor_diameters_in=[],
+        )
+        self.assertFalse(res_empty["pass"])
+        self.assertEqual(res_empty["reason"], "empty_conductor_list")
+
+        res_nan = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=float("nan"),
+            conductor_diameters_in=[0.30],
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_conduit_fill(
+            conduit_inner_diameter_in=-1.0,
+            conductor_diameters_in=[0.30],
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_conduit_diameter")
 
 
 if __name__ == "__main__":

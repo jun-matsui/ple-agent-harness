@@ -1222,3 +1222,58 @@ def verify_aisc_fillet_weld(
         "k_ds": round(k_ds, 4),
         "governing_limit_state": limit_state,
     }
+
+
+def verify_nec_conduit_fill(
+    conduit_inner_diameter_in: float,
+    conductor_diameters_in: Sequence[float],
+    conduit_length_in: float = 120.0,
+    max_fill_override_pct: float = 0.0,
+) -> Dict[str, Any]:
+    """NEC Chapter 9 Table 1 and Note 4 raceway/conduit conductor fill capacity check."""
+    scalars = [conduit_inner_diameter_in, conduit_length_in, max_fill_override_pct]
+    if any(math.isnan(val) for val in scalars) or any(math.isnan(d) for d in conductor_diameters_in):
+        return {"pass": False, "reason": "nan_input"}
+    if conduit_inner_diameter_in <= 0:
+        return {"pass": False, "reason": "non_positive_conduit_diameter"}
+    if conduit_length_in <= 0:
+        return {"pass": False, "reason": "non_positive_conduit_length"}
+    if not conductor_diameters_in:
+        return {"pass": False, "reason": "empty_conductor_list"}
+    if any(d <= 0 for d in conductor_diameters_in):
+        return {"pass": False, "reason": "non_positive_conductor_diameter"}
+    if any(d > conduit_inner_diameter_in for d in conductor_diameters_in):
+        return {"pass": False, "reason": "conductor_exceeds_conduit_diameter"}
+    if not (0.0 <= max_fill_override_pct <= 100.0):
+        return {"pass": False, "reason": "invalid_fill_override"}
+
+    conduit_area_sqin = (math.pi * (conduit_inner_diameter_in ** 2)) / 4.0
+    conductor_areas = [(math.pi * (d ** 2)) / 4.0 for d in conductor_diameters_in]
+    total_conductor_area_sqin = sum(conductor_areas)
+    actual_fill_pct = (total_conductor_area_sqin / conduit_area_sqin) * 100.0
+
+    num_conductors = len(conductor_diameters_in)
+    if max_fill_override_pct > 0.0:
+        allowable_fill_pct = max_fill_override_pct
+    elif conduit_length_in <= 24.0:
+        # NEC Chapter 9 Note 4 nipple exception (length <= 24 in / 600 mm)
+        allowable_fill_pct = 60.0
+    elif num_conductors == 1:
+        allowable_fill_pct = 53.0
+    elif num_conductors == 2:
+        allowable_fill_pct = 31.0
+    else:
+        allowable_fill_pct = 40.0
+
+    dcr = actual_fill_pct / allowable_fill_pct if allowable_fill_pct > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "actual_fill_pct": round(actual_fill_pct, 2),
+        "allowable_fill_pct": round(allowable_fill_pct, 2),
+        "total_conductor_area_sqin": round(total_conductor_area_sqin, 4),
+        "conduit_area_sqin": round(conduit_area_sqin, 4),
+        "conductor_count": num_conductors,
+    }
