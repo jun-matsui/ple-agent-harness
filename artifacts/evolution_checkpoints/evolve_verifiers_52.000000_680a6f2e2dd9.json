@@ -1,0 +1,9 @@
+{
+  "score": 52.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asce7_snow_drift",
+    "rationale": "Evaluates ASCE 7-16/7-22 Section 7.7 & 7.8 leeward and windward snow drift accumulation at roof steps and parapets, computing snow density, clear step height, drift width, peak drift surcharge, and total roof demand-to-capacity ratio.",
+    "model": "gemini-3.8-flash"
+  }
+}

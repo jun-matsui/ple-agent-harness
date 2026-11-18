@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asce7_snow_drift,
     verify_aisc_block_shear,
     verify_nfpa13_fire_sprinkler_demand,
     verify_asce7_nonstructural_component_seismic,
@@ -3341,6 +3342,91 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_input")
+
+
+    def test_asce7_snow_drift(self) -> None:
+        from harness.verifiers import verify_asce7_snow_drift
+
+        # Standard passing leeward drift check (hd <= hc)
+        res_pass = verify_asce7_snow_drift(
+            pg_psf=30.0,
+            lu_fetch_ft=100.0,
+            step_height_ft=10.0,
+            p_capacity_psf=100.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertTrue(res_pass["drift_required"])
+        self.assertAlmostEqual(res_pass["snow_density_pcf"], 17.9, places=1)
+        self.assertAlmostEqual(res_pass["pf_lower_psf"], 21.0, places=1)
+        self.assertAlmostEqual(res_pass["drift_height_ft"], 3.519, places=2)
+        self.assertAlmostEqual(res_pass["drift_width_ft"], 14.08, places=1)
+        self.assertAlmostEqual(res_pass["p_drift_psf"], 63.00, places=1)
+        self.assertAlmostEqual(res_pass["p_total_psf"], 84.00, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 0.840, places=3)
+
+        # Truncated drift condition (hd > hc) with widened drift profile
+        res_trunc = verify_asce7_snow_drift(
+            pg_psf=30.0,
+            lu_fetch_ft=100.0,
+            step_height_ft=3.0,
+            p_capacity_psf=70.0,
+        )
+        self.assertTrue(res_trunc["pass"])
+        self.assertTrue(res_trunc["drift_required"])
+        self.assertAlmostEqual(res_trunc["drift_height_ft"], res_trunc["clear_height_ft"], places=2)
+        self.assertAlmostEqual(res_trunc["drift_width_ft"], 8.0 * res_trunc["clear_height_ft"], places=1)
+
+        # Small step height where hc / hb < 0.2 exempts drift surcharge
+        res_exempt = verify_asce7_snow_drift(
+            pg_psf=30.0,
+            lu_fetch_ft=100.0,
+            step_height_ft=1.3,
+            p_capacity_psf=30.0,
+        )
+        self.assertTrue(res_exempt["pass"])
+        self.assertFalse(res_exempt["drift_required"])
+        self.assertEqual(res_exempt["p_drift_psf"], 0.0)
+        self.assertEqual(res_exempt["p_total_psf"], res_exempt["pf_lower_psf"])
+
+        # Capacity exceeded failure
+        res_fail = verify_asce7_snow_drift(
+            pg_psf=30.0,
+            lu_fetch_ft=100.0,
+            step_height_ft=10.0,
+            p_capacity_psf=70.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Windward drift check (3/4 leeward height)
+        res_windward = verify_asce7_snow_drift(
+            pg_psf=30.0,
+            lu_fetch_ft=100.0,
+            step_height_ft=10.0,
+            p_capacity_psf=100.0,
+            is_windward=True,
+        )
+        self.assertTrue(res_windward["pass"])
+        self.assertAlmostEqual(res_windward["drift_height_ft"], 0.75 * res_pass["drift_height_ft"], places=2)
+
+        # Input error validation checks
+        res_nan = verify_asce7_snow_drift(
+            pg_psf=float("nan"),
+            lu_fetch_ft=100.0,
+            step_height_ft=10.0,
+            p_capacity_psf=80.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_asce7_snow_drift(
+            pg_psf=-30.0,
+            lu_fetch_ft=100.0,
+            step_height_ft=10.0,
+            p_capacity_psf=80.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_loading_or_geometry")
 
 
 if __name__ == "__main__":

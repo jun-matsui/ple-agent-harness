@@ -3392,3 +3392,125 @@ def verify_aisc_block_shear(
         "governing_limit_state": limit_state,
         "tension_term_kips": round(tension_rupture_kips, 2),
     }
+
+
+def verify_asce7_snow_drift(
+    pg_psf: float,
+    lu_fetch_ft: float,
+    step_height_ft: float,
+    p_capacity_psf: float,
+    pf_lower_psf: float = 0.0,
+    ce_exposure_factor: float = 1.0,
+    ct_thermal_factor: float = 1.0,
+    importance_factor: float = 1.0,
+    is_windward: bool = False,
+) -> Dict[str, Any]:
+    """ASCE 7-16/7-22 Section 7.7 & 7.8 leeward and windward snow drift surcharge gate for roof elevation steps."""
+    scalars = [
+        pg_psf,
+        lu_fetch_ft,
+        step_height_ft,
+        p_capacity_psf,
+        pf_lower_psf,
+        ce_exposure_factor,
+        ct_thermal_factor,
+        importance_factor,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            pg_psf,
+            lu_fetch_ft,
+            step_height_ft,
+            p_capacity_psf,
+            ce_exposure_factor,
+            ct_thermal_factor,
+            importance_factor,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_loading_or_geometry"}
+    if pf_lower_psf < 0:
+        return {"pass": False, "reason": "negative_balanced_snow_load"}
+
+    # ASCE 7-16 Eq. 7.7-1 snow density gamma (pcf), capped at 30 pcf
+    gamma_pcf = min(0.13 * pg_psf + 14.0, 30.0)
+
+    # Balanced uniform snow load on lower roof (Eq. 7.3-1) if not explicitly provided
+    if pf_lower_psf > 0.0:
+        pf = pf_lower_psf
+    else:
+        pf = 0.70 * ce_exposure_factor * ct_thermal_factor * importance_factor * pg_psf
+
+    # Balanced snow depth on lower roof (ft)
+    hb_ft = pf / gamma_pcf
+    # Clear height difference between upper roof and lower roof balanced snow surface
+    hc_ft = step_height_ft - hb_ft
+
+    # ASCE 7-16 Section 7.7.1: if hc / hb < 0.2 or hc <= 0, drift need not be evaluated
+    if hc_ft <= 0.0 or (hc_ft / hb_ft) < 0.20:
+        p_total = pf
+        dcr = p_total / p_capacity_psf
+        return {
+            "pass": dcr <= 1.0,
+            "dcr": round(dcr, 4),
+            "p_total_psf": round(p_total, 2),
+            "p_drift_psf": 0.0,
+            "pf_lower_psf": round(pf, 2),
+            "drift_height_ft": 0.0,
+            "drift_width_ft": 0.0,
+            "snow_density_pcf": round(gamma_pcf, 2),
+            "drift_required": False,
+        }
+
+    # ASCE 7-16 Figure 7-9 & Eq. 7.7-2 / 7.7-3 unconstrained drift height hd
+    hd_calc = 0.43 * (lu_fetch_ft ** (1.0 / 3.0)) * ((pg_psf + 10.0) ** 0.25) - 1.50
+    if is_windward:
+        # Windward drift height is 3/4 of leeward drift
+        hd_unclamped = 0.75 * max(hd_calc, 0.0)
+    else:
+        hd_unclamped = max(hd_calc, 0.0)
+
+    if hd_unclamped <= 0.0:
+        p_total = pf
+        dcr = p_total / p_capacity_psf
+        return {
+            "pass": dcr <= 1.0,
+            "dcr": round(dcr, 4),
+            "p_total_psf": round(p_total, 2),
+            "p_drift_psf": 0.0,
+            "pf_lower_psf": round(pf, 2),
+            "drift_height_ft": 0.0,
+            "drift_width_ft": 0.0,
+            "snow_density_pcf": round(gamma_pcf, 2),
+            "drift_required": False,
+        }
+
+    # Check truncation by clear height hc (ASCE 7-16 Section 7.7.1)
+    if hd_unclamped > hc_ft:
+        hd_gov = hc_ft
+        # When hd > hc, drift width widens: w = 4 * hd^2 / hc, capped at 8 * hc
+        w_drift_ft = min(4.0 * (hd_unclamped ** 2) / hc_ft, 8.0 * hc_ft)
+    else:
+        hd_gov = hd_unclamped
+        w_drift_ft = 4.0 * hd_gov
+
+    # Peak drift surcharge pressure pd (psf)
+    pd_psf = hd_gov * gamma_pcf
+    p_total_psf = pf + pd_psf
+    dcr = p_total_psf / p_capacity_psf
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "p_total_psf": round(p_total_psf, 2),
+        "p_drift_psf": round(pd_psf, 2),
+        "pf_lower_psf": round(pf, 2),
+        "drift_height_ft": round(hd_gov, 3),
+        "drift_width_ft": round(w_drift_ft, 2),
+        "clear_height_ft": round(hc_ft, 3),
+        "snow_density_pcf": round(gamma_pcf, 2),
+        "drift_required": True,
+    }
