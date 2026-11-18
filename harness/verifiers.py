@@ -927,3 +927,71 @@ def verify_aisc_bolted_connection(
         "phi_rnb_kips": round(phi_rnb_kips, 2),
         "governing_limit_state": limit_state,
     }
+
+
+def verify_pump_npsh(
+    npsh_required_ft: float,
+    static_suction_head_ft: float,
+    friction_head_loss_ft: float,
+    atmospheric_pressure_psia: float = 14.696,
+    vapor_pressure_psia: float = 0.363,
+    specific_gravity: float = 1.0,
+    min_margin_ratio: float = 1.20,
+    min_margin_ft: float = 2.0,
+) -> Dict[str, Any]:
+    """Hydraulic Institute (ANSI/HI 9.6.1) pump Net Positive Suction Head Available (NPSHa) and cavitation gate."""
+    inputs = [
+        npsh_required_ft,
+        static_suction_head_ft,
+        friction_head_loss_ft,
+        atmospheric_pressure_psia,
+        vapor_pressure_psia,
+        specific_gravity,
+        min_margin_ratio,
+        min_margin_ft,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if npsh_required_ft <= 0:
+        return {"pass": False, "reason": "non_positive_npsh_required"}
+    if friction_head_loss_ft < 0:
+        return {"pass": False, "reason": "negative_friction_loss"}
+    if min(atmospheric_pressure_psia, specific_gravity, min_margin_ratio) <= 0:
+        return {"pass": False, "reason": "non_positive_pressure_or_ratio"}
+    if vapor_pressure_psia < 0:
+        return {"pass": False, "reason": "negative_vapor_pressure"}
+    if min_margin_ft < 0:
+        return {"pass": False, "reason": "negative_margin_distance"}
+    if vapor_pressure_psia >= atmospheric_pressure_psia:
+        return {"pass": False, "reason": "vapor_pressure_exceeds_atmospheric"}
+
+    # Pressure head conversion (ft of liquid) = (p * 144) / (rho_water * SG)
+    density_pcf = 62.4 * specific_gravity
+    h_atm = (atmospheric_pressure_psia * 144.0) / density_pcf
+    h_vp = (vapor_pressure_psia * 144.0) / density_pcf
+
+    npsh_available_ft = h_atm + static_suction_head_ft - friction_head_loss_ft - h_vp
+    if npsh_available_ft <= 0:
+        return {
+            "pass": False,
+            "reason": "zero_or_negative_npsh_available",
+            "npsh_available_ft": round(npsh_available_ft, 4),
+            "npsh_required_ft": round(npsh_required_ft, 4),
+        }
+
+    margin_ratio = npsh_available_ft / npsh_required_ft
+    margin_ft = npsh_available_ft - npsh_required_ft
+    req_npsh_with_margin = max(npsh_required_ft * min_margin_ratio, npsh_required_ft + min_margin_ft)
+    dcr = req_npsh_with_margin / npsh_available_ft
+
+    passed = (margin_ratio >= min_margin_ratio) and (margin_ft >= min_margin_ft)
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "npsh_available_ft": round(npsh_available_ft, 3),
+        "npsh_required_ft": round(npsh_required_ft, 3),
+        "margin_ft": round(margin_ft, 3),
+        "margin_ratio": round(margin_ratio, 4),
+        "h_atm_ft": round(h_atm, 3),
+        "h_vp_ft": round(h_vp, 3),
+    }

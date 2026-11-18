@@ -1,0 +1,9 @@
+{
+  "score": 22.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_pump_npsh",
+    "rationale": "Evaluates pump Net Positive Suction Head Available (NPSHa) versus manufacturer-required NPSHr per Hydraulic Institute (ANSI/HI 9.6.1) standards, verifying cavitation prevention across suction lift/flooded elevation, vapor pressure, and friction head loss.",
+    "model": "gemini-3.8-flash"
+  }
+}

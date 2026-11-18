@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_pump_npsh,
     verify_aisc_bolted_connection,
     verify_ashrae_ventilation_rate,
     verify_asce7_seismic_base_shear,
@@ -752,6 +753,63 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_bolts["pass"])
         self.assertEqual(res_inv_bolts["reason"], "invalid_bolt_count_or_shear_planes")
+
+
+    def test_pump_npsh(self) -> None:
+        from harness.verifiers import verify_pump_npsh
+
+        res_pass = verify_pump_npsh(
+            npsh_required_ft=12.0,
+            static_suction_head_ft=4.0,
+            friction_head_loss_ft=2.0,
+            atmospheric_pressure_psia=14.696,
+            vapor_pressure_psia=0.363,
+            specific_gravity=1.0,
+            min_margin_ratio=1.20,
+            min_margin_ft=2.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertGreater(res_pass["npsh_available_ft"], 12.0)
+        self.assertGreaterEqual(res_pass["margin_ratio"], 1.20)
+        self.assertGreaterEqual(res_pass["margin_ft"], 2.0)
+
+        res_fail_margin = verify_pump_npsh(
+            npsh_required_ft=10.0,
+            static_suction_head_ft=-18.0,
+            friction_head_loss_ft=4.0,
+            atmospheric_pressure_psia=14.696,
+            vapor_pressure_psia=0.363,
+            specific_gravity=1.0,
+        )
+        self.assertFalse(res_fail_margin["pass"])
+        self.assertGreater(res_fail_margin["dcr"], 1.0)
+
+        res_fail_neg_npsha = verify_pump_npsh(
+            npsh_required_ft=8.0,
+            static_suction_head_ft=-35.0,
+            friction_head_loss_ft=2.0,
+        )
+        self.assertFalse(res_fail_neg_npsha["pass"])
+        self.assertEqual(res_fail_neg_npsha["reason"], "zero_or_negative_npsh_available")
+
+        res_nan = verify_pump_npsh(
+            npsh_required_ft=float("nan"),
+            static_suction_head_ft=4.0,
+            friction_head_loss_ft=2.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_vp_err = verify_pump_npsh(
+            npsh_required_ft=10.0,
+            static_suction_head_ft=5.0,
+            friction_head_loss_ft=1.0,
+            atmospheric_pressure_psia=14.7,
+            vapor_pressure_psia=15.0,
+        )
+        self.assertFalse(res_vp_err["pass"])
+        self.assertEqual(res_vp_err["reason"], "vapor_pressure_exceeds_atmospheric")
 
 
 if __name__ == "__main__":
