@@ -1,0 +1,9 @@
+{
+  "score": 24.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_solar_busbar_interconnection",
+    "rationale": "Applies NEC 705.12(B) and NEC 690.8 busbar interconnection compliance rules (including the 120% opposite-end backfeed rule and continuous duty 125% inverter OCPD sizing), resolving a critical gap for electrical PE code-gate evaluations.",
+    "model": "gemini-3.8-flash"
+  }
+}

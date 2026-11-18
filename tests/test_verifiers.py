@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_solar_busbar_interconnection,
     verify_asce7_wind_pressure,
     verify_pump_npsh,
     verify_aisc_bolted_connection,
@@ -881,6 +882,67 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_geometry_or_velocity")
+
+
+    def test_nec_solar_busbar_interconnection(self) -> None:
+        from harness.verifiers import verify_nec_solar_busbar_interconnection
+
+        res_pass = verify_nec_solar_busbar_interconnection(
+            busbar_rating_a=200.0,
+            main_breaker_a=200.0,
+            inverter_rated_ac_current_a=32.0,
+            opposite_end=True,
+            allowance_pct=120.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["dcr"], 1.0, places=3)
+        self.assertEqual(res_pass["pv_breaker_a"], 40.0)
+        self.assertEqual(res_pass["max_allowed_supply_a"], 240.0)
+        self.assertEqual(res_pass["max_pv_breaker_a"], 40.0)
+
+        res_fail_overfeed = verify_nec_solar_busbar_interconnection(
+            busbar_rating_a=200.0,
+            main_breaker_a=200.0,
+            inverter_rated_ac_current_a=48.0,
+            opposite_end=True,
+        )
+        self.assertFalse(res_fail_overfeed["pass"])
+        self.assertGreater(res_fail_overfeed["dcr"], 1.0)
+
+        res_fail_non_opposite = verify_nec_solar_busbar_interconnection(
+            busbar_rating_a=200.0,
+            main_breaker_a=200.0,
+            inverter_rated_ac_current_a=32.0,
+            opposite_end=False,
+        )
+        self.assertFalse(res_fail_non_opposite["pass"])
+        self.assertGreater(res_fail_non_opposite["dcr"], 1.0)
+        self.assertEqual(res_fail_non_opposite["max_allowed_supply_a"], 200.0)
+
+        res_undersized_breaker = verify_nec_solar_busbar_interconnection(
+            busbar_rating_a=200.0,
+            main_breaker_a=150.0,
+            inverter_rated_ac_current_a=40.0,
+            pv_breaker_a=40.0,
+        )
+        self.assertFalse(res_undersized_breaker["pass"])
+        self.assertEqual(res_undersized_breaker["reason"], "inverter_ocpd_undersized")
+
+        res_nan = verify_nec_solar_busbar_interconnection(
+            busbar_rating_a=float("nan"),
+            main_breaker_a=200.0,
+            inverter_rated_ac_current_a=32.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_solar_busbar_interconnection(
+            busbar_rating_a=-200.0,
+            main_breaker_a=200.0,
+            inverter_rated_ac_current_a=32.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_rating_or_current")
 
 
 if __name__ == "__main__":

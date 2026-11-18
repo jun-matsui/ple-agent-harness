@@ -1090,3 +1090,59 @@ def verify_asce7_wind_pressure(
         "kz": round(kz, 4),
         "kh": round(kh, 4),
     }
+
+
+def verify_nec_solar_busbar_interconnection(
+    busbar_rating_a: float,
+    main_breaker_a: float,
+    inverter_rated_ac_current_a: float,
+    pv_breaker_a: float = 0.0,
+    opposite_end: bool = True,
+    allowance_pct: float = 120.0,
+) -> Dict[str, Any]:
+    """NEC 705.12(B) & NEC 690.8 solar PV backfed breaker and busbar interconnection gate."""
+    inputs = [
+        busbar_rating_a,
+        main_breaker_a,
+        inverter_rated_ac_current_a,
+        pv_breaker_a,
+        allowance_pct,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if min(busbar_rating_a, main_breaker_a, inverter_rated_ac_current_a, allowance_pct) <= 0:
+        return {"pass": False, "reason": "non_positive_rating_or_current"}
+    if pv_breaker_a < 0:
+        return {"pass": False, "reason": "negative_breaker_input"}
+
+    min_required_pv_ocpd = 1.25 * inverter_rated_ac_current_a
+    if pv_breaker_a > 0:
+        if pv_breaker_a < min_required_pv_ocpd:
+            return {
+                "pass": False,
+                "reason": "inverter_ocpd_undersized",
+                "pv_breaker_a": round(pv_breaker_a, 2),
+                "min_required_pv_breaker_a": round(min_required_pv_ocpd, 2),
+            }
+        pv_breaker_effective = pv_breaker_a
+    else:
+        pv_breaker_effective = min_required_pv_ocpd
+
+    factor = (allowance_pct / 100.0) if opposite_end else 1.0
+    max_allowed_supply_a = busbar_rating_a * factor
+    total_supply_a = main_breaker_a + pv_breaker_effective
+    max_pv_breaker_a = max_allowed_supply_a - main_breaker_a
+
+    dcr = total_supply_a / max_allowed_supply_a if max_allowed_supply_a > 0 else float("inf")
+    passed = (dcr <= 1.0) and (max_pv_breaker_a >= pv_breaker_effective)
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "total_supply_a": round(total_supply_a, 2),
+        "max_allowed_supply_a": round(max_allowed_supply_a, 2),
+        "pv_breaker_a": round(pv_breaker_effective, 2),
+        "max_pv_breaker_a": round(max_pv_breaker_a, 2),
+        "min_required_pv_breaker_a": round(min_required_pv_ocpd, 2),
+        "opposite_end": opposite_end,
+    }
