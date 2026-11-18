@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nfpa14_standpipe_demand,
     verify_aashto_pavement_structural_number,
     verify_nec_dwelling_service_load,
     verify_ashrae_expansion_tank_sizing,
@@ -4831,6 +4832,114 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_geometry_or_traffic")
+
+
+    def test_nfpa14_standpipe_demand(self) -> None:
+        from harness.verifiers import verify_nfpa14_standpipe_demand
+
+        # Standard passing Class I standpipe check in a fully sprinklered high-rise
+        res_pass = verify_nfpa14_standpipe_demand(
+            num_standpipes=3,
+            available_flow_gpm=1250.0,
+            available_pressure_psi=180.0,
+            most_remote_elevation_ft=120.0,
+            piping_friction_loss_psi=25.0,
+            system_class="Class_I",
+            is_fully_sprinklered=True,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["q_demand_gpm"], 1000.0)
+        self.assertEqual(res_pass["min_residual_pressure_psi"], 100.0)
+        self.assertAlmostEqual(res_pass["p_elevation_psi"], 52.02, places=2)
+        self.assertAlmostEqual(res_pass["p_demand_psi"], 177.02, places=2)
+        self.assertTrue(res_pass["prv_required"])
+        self.assertAlmostEqual(res_pass["flow_dcr"], 0.80, places=2)
+        self.assertAlmostEqual(res_pass["pressure_dcr"], 177.02 / 180.0, places=3)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Non-sprinklered building allowing flow up to 1250 gpm cap
+        res_nonsprink = verify_nfpa14_standpipe_demand(
+            num_standpipes=4,
+            available_flow_gpm=1500.0,
+            available_pressure_psi=200.0,
+            most_remote_elevation_ft=100.0,
+            piping_friction_loss_psi=20.0,
+            system_class="class_1",
+            is_fully_sprinklered=False,
+        )
+        self.assertTrue(res_nonsprink["pass"])
+        self.assertEqual(res_nonsprink["q_demand_gpm"], 1250.0)
+
+        # Class II system with 100 gpm and 65 psi residual demand
+        res_class2 = verify_nfpa14_standpipe_demand(
+            num_standpipes=2,
+            available_flow_gpm=250.0,
+            available_pressure_psi=120.0,
+            most_remote_elevation_ft=60.0,
+            piping_friction_loss_psi=15.0,
+            system_class="class_2",
+        )
+        self.assertTrue(res_class2["pass"])
+        self.assertEqual(res_class2["q_demand_gpm"], 100.0)
+        self.assertEqual(res_class2["min_residual_pressure_psi"], 65.0)
+        self.assertFalse(res_class2["prv_required"])
+
+        # Pressure demand exceeding water supply capacity failure
+        res_fail_press = verify_nfpa14_standpipe_demand(
+            num_standpipes=2,
+            available_flow_gpm=1000.0,
+            available_pressure_psi=140.0,
+            most_remote_elevation_ft=150.0,
+            piping_friction_loss_psi=30.0,
+            system_class="class_1",
+        )
+        self.assertFalse(res_fail_press["pass"])
+        self.assertFalse(res_fail_press["pressure_ok"])
+        self.assertGreater(res_fail_press["pressure_dcr"], 1.0)
+
+        # Flow demand exceeding water supply flow failure
+        res_fail_flow = verify_nfpa14_standpipe_demand(
+            num_standpipes=3,
+            available_flow_gpm=600.0,
+            available_pressure_psi=200.0,
+            most_remote_elevation_ft=50.0,
+            piping_friction_loss_psi=15.0,
+        )
+        self.assertFalse(res_fail_flow["pass"])
+        self.assertFalse(res_fail_flow["flow_ok"])
+        self.assertGreater(res_fail_flow["flow_dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_nfpa14_standpipe_demand(
+            num_standpipes=2,
+            available_flow_gpm=float("nan"),
+            available_pressure_psi=150.0,
+            most_remote_elevation_ft=50.0,
+            piping_friction_loss_psi=10.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nfpa14_standpipe_demand(
+            num_standpipes=0,
+            available_flow_gpm=1000.0,
+            available_pressure_psi=150.0,
+            most_remote_elevation_ft=50.0,
+            piping_friction_loss_psi=10.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_standpipe_count")
+
+        res_inv_class = verify_nfpa14_standpipe_demand(
+            num_standpipes=2,
+            available_flow_gpm=1000.0,
+            available_pressure_psi=150.0,
+            most_remote_elevation_ft=50.0,
+            piping_friction_loss_psi=10.0,
+            system_class="class_iv",
+        )
+        self.assertFalse(res_inv_class["pass"])
+        self.assertEqual(res_inv_class["reason"], "invalid_system_class")
 
 
 if __name__ == "__main__":

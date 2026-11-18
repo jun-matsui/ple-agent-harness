@@ -4898,3 +4898,102 @@ def verify_aashto_pavement_structural_number(
         "traffic_ok": traffic_ok,
         "thickness_ok": thickness_ok,
     }
+
+
+def verify_nfpa14_standpipe_demand(
+    num_standpipes: int,
+    available_flow_gpm: float,
+    available_pressure_psi: float,
+    most_remote_elevation_ft: float,
+    piping_friction_loss_psi: float,
+    system_class: str = "class_1",
+    is_fully_sprinklered: bool = True,
+    min_residual_pressure_override_psi: float = 0.0,
+    max_system_pressure_psi: float = 175.0,
+) -> Dict[str, Any]:
+    """NFPA 14 (2019/2024) & IBC 905 standpipe hydraulic demand, residual pressure, and PRV check."""
+    scalars = [
+        float(num_standpipes),
+        available_flow_gpm,
+        available_pressure_psi,
+        most_remote_elevation_ft,
+        piping_friction_loss_psi,
+        min_residual_pressure_override_psi,
+        max_system_pressure_psi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if num_standpipes <= 0:
+        return {"pass": False, "reason": "non_positive_standpipe_count"}
+    if available_flow_gpm <= 0 or available_pressure_psi <= 0 or max_system_pressure_psi <= 0:
+        return {"pass": False, "reason": "non_positive_supply_flow_or_pressure"}
+    if most_remote_elevation_ft < 0 or piping_friction_loss_psi < 0:
+        return {"pass": False, "reason": "negative_elevation_or_friction_loss"}
+    if min_residual_pressure_override_psi < 0:
+        return {"pass": False, "reason": "negative_residual_pressure"}
+
+    cls_clean = system_class.strip().lower().replace(" ", "_").replace("-", "_")
+    class_map = {
+        "class_1": "class_1",
+        "class_i": "class_1",
+        "1": "class_1",
+        "i": "class_1",
+        "class_2": "class_2",
+        "class_ii": "class_2",
+        "2": "class_2",
+        "ii": "class_2",
+        "class_3": "class_3",
+        "class_iii": "class_3",
+        "3": "class_3",
+        "iii": "class_3",
+    }
+    if cls_clean not in class_map:
+        return {"pass": False, "reason": "invalid_system_class"}
+    norm_class = class_map[cls_clean]
+
+    # NFPA 14 Section 7.10.1 Minimum Flow Rates
+    if norm_class in ("class_1", "class_3"):
+        base_flow = 500.0
+        add_flow = (num_standpipes - 1) * 250.0
+        max_cap = 1000.0 if is_fully_sprinklered else 1250.0
+        q_demand_gpm = min(base_flow + add_flow, max_cap)
+        code_min_residual = 100.0
+    else:  # class_2
+        q_demand_gpm = 100.0
+        code_min_residual = 65.0
+
+    p_residual = (
+        min_residual_pressure_override_psi
+        if min_residual_pressure_override_psi > 0.0
+        else code_min_residual
+    )
+
+    # Static elevation pressure (0.4335 psi/ft of water)
+    p_elevation = 0.4335 * most_remote_elevation_ft
+    p_demand = p_residual + p_elevation + piping_friction_loss_psi
+
+    flow_dcr = q_demand_gpm / available_flow_gpm
+    press_dcr = p_demand / available_pressure_psi
+    gov_dcr = max(flow_dcr, press_dcr)
+
+    # NFPA 14 Section 7.8.3 pressure regulating device requirement
+    prv_required = p_demand > max_system_pressure_psi
+
+    flow_ok = flow_dcr <= 1.0
+    press_ok = press_dcr <= 1.0
+    passed = flow_ok and press_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "flow_dcr": round(flow_dcr, 4),
+        "pressure_dcr": round(press_dcr, 4),
+        "q_demand_gpm": round(q_demand_gpm, 1),
+        "p_demand_psi": round(p_demand, 2),
+        "p_elevation_psi": round(p_elevation, 2),
+        "min_residual_pressure_psi": round(p_residual, 1),
+        "prv_required": prv_required,
+        "system_class": norm_class,
+        "flow_ok": flow_ok,
+        "pressure_ok": press_ok,
+    }
