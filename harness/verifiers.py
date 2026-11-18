@@ -2370,3 +2370,76 @@ def verify_asce7_story_drift_and_pdelta(
         "pdelta_required": pdelta_required,
         "stability_ok": stability_ok,
     }
+
+
+def verify_nec_grounding_electrode_conductor(
+    service_conductor_kcmil: float,
+    gec_provided_kcmil: float,
+    service_material: str = "copper",
+    gec_material: str = "copper",
+) -> Dict[str, Any]:
+    """NEC 250.66 Grounding Electrode Conductor (GEC) minimum sizing check for AC services."""
+    scalars = [service_conductor_kcmil, gec_provided_kcmil]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if service_conductor_kcmil <= 0 or gec_provided_kcmil <= 0:
+        return {"pass": False, "reason": "non_positive_conductor_area"}
+
+    s_mat = service_material.strip().lower()
+    g_mat = gec_material.strip().lower()
+    valid_materials = {"copper", "cu", "aluminum", "al"}
+    if s_mat not in valid_materials or g_mat not in valid_materials:
+        return {"pass": False, "reason": "invalid_conductor_material"}
+
+    is_s_cu = s_mat in {"copper", "cu"}
+    is_g_cu = g_mat in {"copper", "cu"}
+
+    # NEC Table 250.66 standard wire areas in kcmil
+    # 8 AWG = 16.51 kcmil, 6 AWG = 26.24 kcmil, 4 AWG = 41.74 kcmil,
+    # 2 AWG = 66.36 kcmil, 1/0 AWG = 105.6 kcmil, 2/0 AWG = 133.1 kcmil,
+    # 3/0 AWG = 167.8 kcmil, 250 kcmil = 250.0 kcmil
+    if is_s_cu:
+        if service_conductor_kcmil <= 41.74:  # <= 2 AWG Cu
+            req_kcmil = 16.51 if is_g_cu else 26.24  # 8 AWG Cu or 6 AWG Al
+        elif service_conductor_kcmil <= 105.6:  # 1 AWG or 1/0 AWG Cu
+            req_kcmil = 26.24 if is_g_cu else 41.74  # 6 AWG Cu or 4 AWG Al
+        elif service_conductor_kcmil <= 167.8:  # 2/0 or 3/0 AWG Cu
+            req_kcmil = 41.74 if is_g_cu else 66.36  # 4 AWG Cu or 2 AWG Al
+        elif service_conductor_kcmil <= 600.0:  # Over 3/0 thru 350 kcmil, or over 350 thru 600 kcmil Cu
+            if service_conductor_kcmil <= 350.0:
+                req_kcmil = 66.36 if is_g_cu else 105.6  # 2 AWG Cu or 1/0 Al
+            else:
+                req_kcmil = 105.6 if is_g_cu else 167.8  # 1/0 Cu or 3/0 Al
+        elif service_conductor_kcmil <= 1100.0:
+            req_kcmil = 133.1 if is_g_cu else 250.0  # 2/0 Cu or 250 kcmil Al
+        else:
+            # Over 1100 kcmil: 12.5% of total area per NEC 250.66 Note 1
+            multiplier = 0.125 if is_g_cu else (0.125 * (66.36 / 41.74))
+            req_kcmil = service_conductor_kcmil * multiplier
+    else:  # Service is Aluminum
+        if service_conductor_kcmil <= 66.36:  # <= 1/0 AWG Al
+            req_kcmil = 16.51 if is_g_cu else 26.24
+        elif service_conductor_kcmil <= 167.8:  # 2/0 or 3/0 AWG Al
+            req_kcmil = 26.24 if is_g_cu else 41.74
+        elif service_conductor_kcmil <= 250.0:  # 4/0 AWG or 250 kcmil Al
+            req_kcmil = 41.74 if is_g_cu else 66.36
+        elif service_conductor_kcmil <= 500.0:  # Over 250 thru 500 kcmil Al
+            req_kcmil = 66.36 if is_g_cu else 105.6
+        elif service_conductor_kcmil <= 900.0:  # Over 500 thru 900 kcmil Al
+            req_kcmil = 105.6 if is_g_cu else 167.8
+        elif service_conductor_kcmil <= 1750.0:  # Over 900 thru 1750 kcmil Al
+            req_kcmil = 133.1 if is_g_cu else 250.0
+        else:
+            multiplier = (0.125 * (41.74 / 66.36)) if is_g_cu else 0.125
+            req_kcmil = service_conductor_kcmil * multiplier
+
+    dcr = req_kcmil / gec_provided_kcmil
+    passed = dcr <= 1.0
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "min_gec_kcmil": round(req_kcmil, 2),
+        "provided_gec_kcmil": round(gec_provided_kcmil, 2),
+        "service_material": s_mat,
+        "gec_material": g_mat,
+    }

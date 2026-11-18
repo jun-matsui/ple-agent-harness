@@ -1,0 +1,9 @@
+{
+  "score": 40.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_grounding_electrode_conductor",
+    "rationale": "Sizing the Grounding Electrode Conductor (GEC) is a ubiquitous PLE electrical discipline problem per NEC 250.66, where copper or aluminum service-entrance conductors determine the minimum required copper or aluminum grounding conductor size across standard wire gauges.",
+    "model": "gemini-3.8-flash"
+  }
+}

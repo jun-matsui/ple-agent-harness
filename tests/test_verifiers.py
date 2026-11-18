@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_grounding_electrode_conductor,
     verify_asce7_story_drift_and_pdelta,
     verify_darcy_weisbach_pipe_flow,
     verify_aci_column_axial_load,
@@ -2274,6 +2275,75 @@ class TestEngineeringVerifiers(unittest.TestCase):
             risk_category="V",
         )
         self.assertFalse(res_inv_cat["pass"]); self.assertEqual(res_inv_cat["reason"], "invalid_risk_category")
+
+
+    def test_nec_grounding_electrode_conductor(self) -> None:
+        from harness.verifiers import verify_nec_grounding_electrode_conductor
+
+        # 500 kcmil Cu service conductor with 1/0 AWG Cu GEC (105.6 kcmil) -> Pass
+        res_pass = verify_nec_grounding_electrode_conductor(
+            service_conductor_kcmil=500.0,
+            gec_provided_kcmil=105.6,
+            service_material="copper",
+            gec_material="copper",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["dcr"], 1.0, places=3)
+        self.assertEqual(res_pass["min_gec_kcmil"], 105.6)
+
+        # 500 kcmil Cu service conductor with undersized 2 AWG Cu GEC (66.36 kcmil) -> Fail
+        res_fail = verify_nec_grounding_electrode_conductor(
+            service_conductor_kcmil=500.0,
+            gec_provided_kcmil=66.36,
+            service_material="copper",
+            gec_material="copper",
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Aluminum service conductor (750 kcmil Al) with Cu GEC (1/0 Cu = 105.6 kcmil) -> Pass
+        res_al_service = verify_nec_grounding_electrode_conductor(
+            service_conductor_kcmil=750.0,
+            gec_provided_kcmil=105.6,
+            service_material="aluminum",
+            gec_material="copper",
+        )
+        self.assertTrue(res_al_service["pass"])
+        self.assertEqual(res_al_service["min_gec_kcmil"], 105.6)
+
+        # Large Cu service (>1100 kcmil: 2000 kcmil) 12.5% rule
+        res_large = verify_nec_grounding_electrode_conductor(
+            service_conductor_kcmil=2000.0,
+            gec_provided_kcmil=250.0,
+            service_material="copper",
+            gec_material="copper",
+        )
+        self.assertTrue(res_large["pass"])
+        self.assertEqual(res_large["min_gec_kcmil"], 250.0)
+
+        # Invalid material check
+        res_mat = verify_nec_grounding_electrode_conductor(
+            service_conductor_kcmil=500.0,
+            gec_provided_kcmil=105.6,
+            service_material="silver",
+        )
+        self.assertFalse(res_mat["pass"])
+        self.assertEqual(res_mat["reason"], "invalid_conductor_material")
+
+        # NaN and negative edge cases
+        res_nan = verify_nec_grounding_electrode_conductor(
+            service_conductor_kcmil=float("nan"),
+            gec_provided_kcmil=105.6,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_grounding_electrode_conductor(
+            service_conductor_kcmil=-500.0,
+            gec_provided_kcmil=105.6,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_conductor_area")
 
 
 if __name__ == "__main__":
