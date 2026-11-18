@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nfpa13_fire_sprinkler_demand,
     verify_asce7_nonstructural_component_seismic,
     verify_nec_equipment_grounding_conductor,
     verify_aashto_horizontal_curve,
@@ -3140,6 +3141,96 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_loading_or_capacity")
+
+
+    def test_nfpa13_fire_sprinkler_demand(self) -> None:
+        from harness.verifiers import verify_nfpa13_fire_sprinkler_demand
+
+        # Standard wet-pipe Ordinary Hazard Group 1 passing check
+        res_pass = verify_nfpa13_fire_sprinkler_demand(
+            hazard_classification="ordinary_hazard_group_1",
+            coverage_area_per_sprinkler_sqft=130.0,
+            available_flow_gpm=500.0,
+            available_pressure_psi=75.0,
+            system_piping_loss_psi=25.0,
+            elevation_loss_psi=10.0,
+            k_factor=5.6,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["num_sprinklers"], 12)
+        self.assertEqual(res_pass["design_density_gpm_sqft"], 0.15)
+        self.assertAlmostEqual(res_pass["q_sprinklers_gpm"], 234.0, places=1)
+        self.assertAlmostEqual(res_pass["q_total_demand_gpm"], 484.0, places=1)
+        self.assertAlmostEqual(res_pass["p_head_psi"], 12.13, places=1)
+        self.assertAlmostEqual(res_pass["p_total_demand_psi"], 47.13, places=1)
+        self.assertAlmostEqual(res_pass["flow_dcr"], 484.0 / 500.0, places=3)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Dry pipe system triggers 30% area increase and exceeds flow supply
+        res_dry_fail = verify_nfpa13_fire_sprinkler_demand(
+            hazard_classification="ordinary_hazard_group_1",
+            coverage_area_per_sprinkler_sqft=130.0,
+            available_flow_gpm=500.0,
+            available_pressure_psi=75.0,
+            system_piping_loss_psi=25.0,
+            elevation_loss_psi=10.0,
+            is_dry_system=True,
+        )
+        self.assertFalse(res_dry_fail["pass"])
+        self.assertEqual(res_dry_fail["design_area_sqft"], 1950.0)
+        self.assertEqual(res_dry_fail["num_sprinklers"], 15)
+        self.assertGreater(res_dry_fail["q_total_demand_gpm"], 500.0)
+        self.assertGreater(res_dry_fail["flow_dcr"], 1.0)
+
+        # Pressure capacity failure (high friction loss)
+        res_press_fail = verify_nfpa13_fire_sprinkler_demand(
+            hazard_classification="light_hazard",
+            coverage_area_per_sprinkler_sqft=150.0,
+            available_flow_gpm=500.0,
+            available_pressure_psi=40.0,
+            system_piping_loss_psi=35.0,
+            elevation_loss_psi=15.0,
+        )
+        self.assertFalse(res_press_fail["pass"])
+        self.assertGreater(res_press_fail["pressure_dcr"], 1.0)
+
+        # Sprinkler spacing exceeds maximum allowable per code
+        res_spacing_err = verify_nfpa13_fire_sprinkler_demand(
+            hazard_classification="extra_hazard_group_1",
+            coverage_area_per_sprinkler_sqft=120.0,
+            available_flow_gpm=1000.0,
+            available_pressure_psi=90.0,
+        )
+        self.assertFalse(res_spacing_err["pass"])
+        self.assertEqual(res_spacing_err["reason"], "sprinkler_coverage_exceeds_maximum")
+
+        # Input error validation
+        res_nan = verify_nfpa13_fire_sprinkler_demand(
+            hazard_classification="light",
+            coverage_area_per_sprinkler_sqft=float("nan"),
+            available_flow_gpm=500.0,
+            available_pressure_psi=75.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nfpa13_fire_sprinkler_demand(
+            hazard_classification="light",
+            coverage_area_per_sprinkler_sqft=150.0,
+            available_flow_gpm=-500.0,
+            available_pressure_psi=75.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_capacity")
+
+        res_inv_hazard = verify_nfpa13_fire_sprinkler_demand(
+            hazard_classification="nuclear_storage",
+            coverage_area_per_sprinkler_sqft=100.0,
+            available_flow_gpm=500.0,
+            available_pressure_psi=75.0,
+        )
+        self.assertFalse(res_inv_hazard["pass"])
+        self.assertEqual(res_inv_hazard["reason"], "invalid_hazard_classification")
 
 
 if __name__ == "__main__":

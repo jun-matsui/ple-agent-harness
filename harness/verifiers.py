@@ -3221,3 +3221,118 @@ def verify_asce7_nonstructural_component_seismic(
         "f_pv_kips": round(f_pv, 3),
         "governing_limit": gov_limit,
     }
+
+
+def verify_nfpa13_fire_sprinkler_demand(
+    hazard_classification: str,
+    coverage_area_per_sprinkler_sqft: float,
+    available_flow_gpm: float,
+    available_pressure_psi: float,
+    design_area_sqft: float = 0.0,
+    density_gpm_per_sqft: float = 0.0,
+    k_factor: float = 5.6,
+    system_piping_loss_psi: float = 25.0,
+    elevation_loss_psi: float = 0.0,
+    hose_allowance_gpm: float = 0.0,
+    is_dry_system: bool = False,
+    min_head_pressure_psi: float = 7.0,
+) -> Dict[str, Any]:
+    """NFPA 13 (2019/2022) Chapter 19 & 27 hydraulic demand and water supply adequacy gate."""
+    scalars = [
+        coverage_area_per_sprinkler_sqft,
+        available_flow_gpm,
+        available_pressure_psi,
+        design_area_sqft,
+        density_gpm_per_sqft,
+        k_factor,
+        system_piping_loss_psi,
+        elevation_loss_psi,
+        hose_allowance_gpm,
+        min_head_pressure_psi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            coverage_area_per_sprinkler_sqft,
+            available_flow_gpm,
+            available_pressure_psi,
+            k_factor,
+            min_head_pressure_psi,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_capacity"}
+    if (
+        design_area_sqft < 0
+        or density_gpm_per_sqft < 0
+        or system_piping_loss_psi < 0
+        or elevation_loss_psi < 0
+        or hose_allowance_gpm < 0
+    ):
+        return {"pass": False, "reason": "negative_hydraulic_parameter"}
+
+    hazard_key = hazard_classification.strip().lower().replace(" ", "_")
+    # NFPA 13 Table 19.3.3.1.1 & Table 10.2.4.2.1: (density, default_area, default_hose, max_coverage_sqft)
+    hazard_data: Dict[str, Tuple[float, float, float, float]] = {
+        "light": (0.10, 1500.0, 100.0, 225.0),
+        "light_hazard": (0.10, 1500.0, 100.0, 225.0),
+        "ordinary_1": (0.15, 1500.0, 250.0, 130.0),
+        "ordinary_hazard_group_1": (0.15, 1500.0, 250.0, 130.0),
+        "oh1": (0.15, 1500.0, 250.0, 130.0),
+        "ordinary_2": (0.20, 1500.0, 250.0, 130.0),
+        "ordinary_hazard_group_2": (0.20, 1500.0, 250.0, 130.0),
+        "oh2": (0.20, 1500.0, 250.0, 130.0),
+        "extra_1": (0.30, 2500.0, 500.0, 100.0),
+        "extra_hazard_group_1": (0.30, 2500.0, 500.0, 100.0),
+        "eh1": (0.30, 2500.0, 500.0, 100.0),
+        "extra_2": (0.40, 2500.0, 500.0, 100.0),
+        "extra_hazard_group_2": (0.40, 2500.0, 500.0, 100.0),
+        "eh2": (0.40, 2500.0, 500.0, 100.0),
+    }
+    if hazard_key not in hazard_data:
+        return {"pass": False, "reason": "invalid_hazard_classification"}
+
+    code_density, code_area, code_hose, max_coverage_sqft = hazard_data[hazard_key]
+    if coverage_area_per_sprinkler_sqft > max_coverage_sqft:
+        return {"pass": False, "reason": "sprinkler_coverage_exceeds_maximum"}
+
+    eff_density = density_gpm_per_sqft if density_gpm_per_sqft > 0.0 else code_density
+    base_area = design_area_sqft if design_area_sqft > 0.0 else code_area
+    # NFPA 13 Section 19.3.3.2.3: 30% area penalty for dry-pipe systems
+    eff_area = base_area * 1.30 if is_dry_system else base_area
+    eff_hose = hose_allowance_gpm if hose_allowance_gpm > 0.0 else code_hose
+
+    num_sprinklers = int(math.ceil(eff_area / coverage_area_per_sprinkler_sqft))
+
+    # Minimum discharge flow per sprinkler
+    q_density = eff_density * coverage_area_per_sprinkler_sqft
+    q_min_press = k_factor * math.sqrt(min_head_pressure_psi)
+    q_head = max(q_density, q_min_press)
+
+    # Hydraulic pressure demand at most remote sprinkler head (P = (Q / K)^2)
+    p_head = (q_head / k_factor) ** 2
+
+    q_sprinklers = num_sprinklers * q_head
+    q_total_demand = q_sprinklers + eff_hose
+    p_total_demand = p_head + system_piping_loss_psi + elevation_loss_psi
+
+    flow_dcr = q_total_demand / available_flow_gpm
+    press_dcr = p_total_demand / available_pressure_psi
+    gov_dcr = max(flow_dcr, press_dcr)
+
+    passed = (gov_dcr <= 1.0) and (p_head >= min_head_pressure_psi)
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "flow_dcr": round(flow_dcr, 4),
+        "pressure_dcr": round(press_dcr, 4),
+        "q_total_demand_gpm": round(q_total_demand, 2),
+        "q_sprinklers_gpm": round(q_sprinklers, 2),
+        "p_total_demand_psi": round(p_total_demand, 2),
+        "p_head_psi": round(p_head, 2),
+        "num_sprinklers": num_sprinklers,
+        "design_area_sqft": round(eff_area, 1),
+        "design_density_gpm_sqft": round(eff_density, 3),
+        "hose_allowance_gpm": round(eff_hose, 1),
+    }

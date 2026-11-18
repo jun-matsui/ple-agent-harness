@@ -1,0 +1,9 @@
+{
+  "score": 50.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nfpa13_fire_sprinkler_demand",
+    "rationale": "Implements NFPA 13 Chapter 19 & 27 hydraulic area/density demand and water supply adequacy verification for fire protection sprinkler systems. Fills a critical MEP/fire protection gap on the Physical-Engineering exam covering hazard classification, remote head pressure, dry-pipe area penalties, and hose stream allowances.",
+    "model": "gemini-3.8-flash"
+  }
+}
