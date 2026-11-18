@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_corbel_capacity,
     verify_aci_beam_deflection,
     verify_aci_shear_friction,
     verify_ashrae_fan_power_limitation,
@@ -5261,6 +5262,134 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_moment_input")
+
+
+    def test_aci_corbel_capacity(self) -> None:
+        from harness.verifiers import verify_aci_corbel_capacity
+
+        # Standard passing reinforced concrete corbel check
+        res_pass = verify_aci_corbel_capacity(
+            vu_kips=60.0,
+            shear_span_a_in=5.0,
+            b_in=12.0,
+            d_in=14.0,
+            h_in=16.0,
+            as_provided_in2=1.20,
+            ah_provided_in2=0.60,
+            fc_psi=5000.0,
+            fy_psi=60000.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["a_over_d"], 5.0 / 14.0, places=3)
+        self.assertAlmostEqual(res_pass["nuc_effective_kips"], 12.0, places=2)
+        self.assertAlmostEqual(res_pass["phi_vn_max_kips"], 110.88, places=1)
+        self.assertAlmostEqual(res_pass["mu_kip_in"], 324.0, places=1)
+        self.assertAlmostEqual(res_pass["asc_req_in2"], 0.902, places=2)
+        self.assertAlmostEqual(res_pass["ah_req_in2"], 0.317, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["shear_section_ok"])
+        self.assertTrue(res_pass["asc_ok"])
+        self.assertTrue(res_pass["ah_ok"])
+
+        # Shear span-to-depth ratio exceeding 1.0 violation (ACI 16.5.1.1)
+        res_span_err = verify_aci_corbel_capacity(
+            vu_kips=60.0,
+            shear_span_a_in=16.0,
+            b_in=12.0,
+            d_in=14.0,
+            h_in=16.0,
+            as_provided_in2=1.20,
+            ah_provided_in2=0.60,
+            fc_psi=5000.0,
+        )
+        self.assertFalse(res_span_err["pass"])
+        self.assertEqual(res_span_err["reason"], "shear_span_ratio_exceeds_unity")
+
+        # Section shear capacity exceeded failure (Vu > phi * Vn_max)
+        res_fail_shear = verify_aci_corbel_capacity(
+            vu_kips=125.0,
+            shear_span_a_in=5.0,
+            b_in=12.0,
+            d_in=14.0,
+            h_in=16.0,
+            as_provided_in2=2.50,
+            ah_provided_in2=1.20,
+            fc_psi=5000.0,
+        )
+        self.assertFalse(res_fail_shear["pass"])
+        self.assertFalse(res_fail_shear["shear_section_ok"])
+        self.assertGreater(res_fail_shear["shear_dcr"], 1.0)
+
+        # Undersized primary tension reinforcement failure (As < Asc_req)
+        res_fail_as = verify_aci_corbel_capacity(
+            vu_kips=60.0,
+            shear_span_a_in=5.0,
+            b_in=12.0,
+            d_in=14.0,
+            h_in=16.0,
+            as_provided_in2=0.75,
+            ah_provided_in2=0.60,
+            fc_psi=5000.0,
+        )
+        self.assertFalse(res_fail_as["pass"])
+        self.assertFalse(res_fail_as["asc_ok"])
+        self.assertGreater(res_fail_as["asc_dcr"], 1.0)
+
+        # Undersized closed stirrups failure (Ah < Ah_req)
+        res_fail_ah = verify_aci_corbel_capacity(
+            vu_kips=60.0,
+            shear_span_a_in=5.0,
+            b_in=12.0,
+            d_in=14.0,
+            h_in=16.0,
+            as_provided_in2=1.20,
+            ah_provided_in2=0.20,
+            fc_psi=5000.0,
+        )
+        self.assertFalse(res_fail_ah["pass"])
+        self.assertFalse(res_fail_ah["ah_ok"])
+        self.assertGreater(res_fail_ah["ah_dcr"], 1.0)
+
+        # Effective depth exceeds total height error
+        res_geom_err = verify_aci_corbel_capacity(
+            vu_kips=60.0,
+            shear_span_a_in=5.0,
+            b_in=12.0,
+            d_in=16.0,
+            h_in=15.0,
+            as_provided_in2=1.20,
+            ah_provided_in2=0.60,
+            fc_psi=5000.0,
+        )
+        self.assertFalse(res_geom_err["pass"])
+        self.assertEqual(res_geom_err["reason"], "effective_depth_exceeds_total_height")
+
+        # NaN and negative input validation checks
+        res_nan = verify_aci_corbel_capacity(
+            vu_kips=float("nan"),
+            shear_span_a_in=5.0,
+            b_in=12.0,
+            d_in=14.0,
+            h_in=16.0,
+            as_provided_in2=1.20,
+            ah_provided_in2=0.60,
+            fc_psi=5000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_corbel_capacity(
+            vu_kips=-20.0,
+            shear_span_a_in=5.0,
+            b_in=12.0,
+            d_in=14.0,
+            h_in=16.0,
+            as_provided_in2=1.20,
+            ah_provided_in2=0.60,
+            fc_psi=5000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_or_span")
 
 
 if __name__ == "__main__":

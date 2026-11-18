@@ -1,0 +1,9 @@
+{
+  "score": 70.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_corbel_capacity",
+    "rationale": "Evaluates reinforced concrete corbel and bracket structural integrity under ACI 318-19 Section 16.5, checking dimensional shear-span limits, maximum section shear strength, shear-friction, flexure, concurrent horizontal tension, and horizontal closed stirrup distribution.",
+    "model": "gemini-3.8-flash"
+  }
+}

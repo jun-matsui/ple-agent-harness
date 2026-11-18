@@ -5378,3 +5378,127 @@ def verify_aci_beam_deflection(
         "live_deflection_ok": live_dcr <= 1.0,
         "total_deflection_ok": total_dcr <= 1.0,
     }
+
+
+def verify_aci_corbel_capacity(
+    vu_kips: float,
+    shear_span_a_in: float,
+    b_in: float,
+    d_in: float,
+    h_in: float,
+    as_provided_in2: float,
+    ah_provided_in2: float,
+    fc_psi: float,
+    fy_psi: float = 60000.0,
+    nuc_kips: float = 0.0,
+    min_nuc_ratio: float = 0.20,
+    friction_coeff_mu: float = 1.4,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 16.5 LRFD design capacity check for reinforced concrete corbels and brackets."""
+    scalars = [
+        vu_kips,
+        shear_span_a_in,
+        b_in,
+        d_in,
+        h_in,
+        as_provided_in2,
+        ah_provided_in2,
+        fc_psi,
+        fy_psi,
+        nuc_kips,
+        min_nuc_ratio,
+        friction_coeff_mu,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(b_in, d_in, h_in, as_provided_in2, fc_psi, fy_psi, friction_coeff_mu, phi) <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if vu_kips < 0 or nuc_kips < 0 or shear_span_a_in < 0:
+        return {"pass": False, "reason": "negative_load_or_span"}
+    if ah_provided_in2 < 0 or min_nuc_ratio < 0:
+        return {"pass": False, "reason": "negative_stirrup_or_ratio"}
+    if d_in >= h_in:
+        return {"pass": False, "reason": "effective_depth_exceeds_total_height"}
+
+    # ACI 318-19 Section 16.5.1.1 shear span-to-depth ratio constraint (a / d <= 1.0)
+    a_over_d = shear_span_a_in / d_in
+    if a_over_d > 1.0:
+        return {
+            "pass": False,
+            "reason": "shear_span_ratio_exceeds_unity",
+            "a_over_d": round(a_over_d, 4),
+        }
+
+    # ACI 318-19 Section 16.5.2.4 minimum design horizontal tensile force Nuc >= 0.20 * Vu
+    nuc_eff_kips = max(nuc_kips, min_nuc_ratio * vu_kips)
+
+    # ACI 318-19 Section 16.5.2.1 maximum nominal shear strength upper bounds
+    vn_max_lb = min(
+        0.20 * fc_psi * b_in * d_in,
+        (480.0 + 0.08 * fc_psi) * b_in * d_in,
+        1600.0 * b_in * d_in,
+    )
+    phi_vn_max_kips = (phi * vn_max_lb) / 1000.0
+    shear_dcr = vu_kips / phi_vn_max_kips if phi_vn_max_kips > 0 else float("inf")
+    shear_section_ok = shear_dcr <= 1.0
+
+    fc_ksi = fc_psi / 1000.0
+    fy_ksi = min(fy_psi, 60000.0) / 1000.0
+
+    # ACI 318-19 Section 16.5.4.3 shear-friction reinforcement Avf
+    avf_in2 = vu_kips / (phi * friction_coeff_mu * fy_ksi)
+
+    # ACI 318-19 Section 16.5.4.5 direct tensile reinforcement An
+    an_in2 = nuc_eff_kips / (phi * fy_ksi)
+
+    # ACI 318-19 Section 16.5.4.4 flexural reinforcement Af
+    # Factored moment Mu at the face of support
+    mu_kip_in = (vu_kips * shear_span_a_in) + (nuc_eff_kips * (h_in - d_in))
+    mn_req_kip_in = mu_kip_in / phi
+
+    term_flex = (2.0 * mn_req_kip_in) / (0.85 * fc_ksi * b_in * (d_in**2))
+    if term_flex >= 1.0:
+        return {"pass": False, "reason": "flexural_capacity_exceeded"}
+
+    af_in2 = ((0.85 * fc_ksi * b_in * d_in) / fy_ksi) * (1.0 - math.sqrt(1.0 - term_flex))
+
+    # ACI 318-19 Section 16.5.5.1 primary tension reinforcement Asc
+    asc_strength_in2 = max(af_in2 + an_in2, (2.0 / 3.0) * avf_in2 + an_in2)
+    asc_min_in2 = 0.04 * (fc_psi / fy_psi) * b_in * d_in
+    asc_req_in2 = max(asc_strength_in2, asc_min_in2)
+
+    asc_dcr = asc_req_in2 / as_provided_in2
+    asc_ok = asc_dcr <= 1.0
+
+    # ACI 318-19 Section 16.5.5.2 closed stirrups Ah parallel to Asc
+    ah_req_in2 = 0.50 * (asc_req_in2 - an_in2)
+    if ah_req_in2 > 0.0:
+        ah_dcr = ah_req_in2 / ah_provided_in2 if ah_provided_in2 > 0 else float("inf")
+        ah_ok = ah_dcr <= 1.0
+    else:
+        ah_dcr = 0.0
+        ah_ok = True
+
+    gov_dcr = max(shear_dcr, asc_dcr, ah_dcr)
+    passed = shear_section_ok and asc_ok and ah_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "shear_dcr": round(shear_dcr, 4),
+        "asc_dcr": round(asc_dcr, 4),
+        "ah_dcr": round(ah_dcr, 4),
+        "asc_req_in2": round(asc_req_in2, 3),
+        "ah_req_in2": round(ah_req_in2, 3),
+        "phi_vn_max_kips": round(phi_vn_max_kips, 2),
+        "mu_kip_in": round(mu_kip_in, 2),
+        "nuc_effective_kips": round(nuc_eff_kips, 2),
+        "a_over_d": round(a_over_d, 4),
+        "shear_section_ok": shear_section_ok,
+        "asc_ok": asc_ok,
+        "ah_ok": ah_ok,
+    }
