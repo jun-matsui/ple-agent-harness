@@ -1,0 +1,9 @@
+{
+  "score": 68.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_shear_friction",
+    "rationale": "Implements ACI 318-19 Section 22.9 Shear Friction code-gate verification for reinforced concrete construction joints, cold joints, composite slab-to-girder interfaces, and bearing corbels, resolving critical structural failure modes under direct shear, interface roughness conditions, net axial tension/compression clamping forces, and reinforcement inclination.",
+    "model": "gemini-3.8-flash"
+  }
+}

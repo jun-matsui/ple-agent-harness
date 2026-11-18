@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_shear_friction,
     verify_ashrae_fan_power_limitation,
     verify_nfpa14_standpipe_demand,
     verify_aashto_pavement_structural_number,
@@ -5047,6 +5048,116 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_sys["pass"])
         self.assertEqual(res_inv_sys["reason"], "invalid_system_type")
+
+
+    def test_aci_shear_friction(self) -> None:
+        from harness.verifiers import verify_aci_shear_friction
+
+        # Standard passing monolithic normalweight concrete cold joint
+        res_pass = verify_aci_shear_friction(
+            vu_kips=45.0,
+            avf_in2=1.20,
+            ac_in2=144.0,
+            fc_psi=4000.0,
+            fy_psi=60000.0,
+            interface_type="monolithic",
+            concrete_type="normalweight",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["friction_coeff_mu"], 1.4)
+        self.assertEqual(res_pass["governing_limit_state"], "shear_friction")
+        self.assertAlmostEqual(res_pass["vn_kips"], 100.8, places=1)
+        self.assertAlmostEqual(res_pass["phi_vn_kips"], 75.6, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 45.0 / 75.6, places=4)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Shear demand exceeding capacity failure
+        res_fail_load = verify_aci_shear_friction(
+            vu_kips=85.0,
+            avf_in2=1.20,
+            ac_in2=144.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_fail_load["pass"])
+        self.assertGreater(res_fail_load["dcr"], 1.0)
+
+        # Inclined reinforcement enhancement (alpha = 60 deg) and capping at Vn_max
+        res_inclined = verify_aci_shear_friction(
+            vu_kips=60.0,
+            avf_in2=1.20,
+            ac_in2=144.0,
+            fc_psi=4000.0,
+            reinforcement_angle_deg=60.0,
+        )
+        self.assertTrue(res_inclined["pass"])
+        self.assertEqual(res_inclined["governing_limit_state"], "section_compression_limit")
+        self.assertAlmostEqual(res_inclined["vn_max_kips"], 115.2, places=1)
+        self.assertAlmostEqual(res_inclined["phi_vn_kips"], 86.4, places=1)
+
+        # Net tension force reducing clamping capacity
+        res_tension = verify_aci_shear_friction(
+            vu_kips=35.0,
+            avf_in2=1.20,
+            ac_in2=144.0,
+            fc_psi=4000.0,
+            tension_force_nu_kips=20.0,
+        )
+        self.assertTrue(res_tension["pass"])
+        self.assertAlmostEqual(res_tension["vn_kips"], 72.8, places=1)
+        self.assertAlmostEqual(res_tension["phi_vn_kips"], 54.6, places=1)
+
+        # Tension exceeding total reinforcement capacity error
+        res_overtension = verify_aci_shear_friction(
+            vu_kips=20.0,
+            avf_in2=1.0,
+            ac_in2=144.0,
+            fc_psi=4000.0,
+            fy_psi=60000.0,
+            tension_force_nu_kips=65.0,
+        )
+        self.assertFalse(res_overtension["pass"])
+        self.assertEqual(res_overtension["reason"], "tension_exceeds_reinforcement_capacity")
+
+        # Invalid interface type
+        res_inv_type = verify_aci_shear_friction(
+            vu_kips=30.0,
+            avf_in2=1.0,
+            ac_in2=100.0,
+            fc_psi=4000.0,
+            interface_type="timber_to_concrete",
+        )
+        self.assertFalse(res_inv_type["pass"])
+        self.assertEqual(res_inv_type["reason"], "invalid_interface_type")
+
+        # Invalid reinforcement angle
+        res_inv_angle = verify_aci_shear_friction(
+            vu_kips=30.0,
+            avf_in2=1.0,
+            ac_in2=100.0,
+            fc_psi=4000.0,
+            reinforcement_angle_deg=105.0,
+        )
+        self.assertFalse(res_inv_angle["pass"])
+        self.assertEqual(res_inv_angle["reason"], "invalid_reinforcement_angle")
+
+        # NaN and negative input validation
+        res_nan = verify_aci_shear_friction(
+            vu_kips=float("nan"),
+            avf_in2=1.0,
+            ac_in2=100.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_shear_friction(
+            vu_kips=-10.0,
+            avf_in2=1.0,
+            ac_in2=100.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_shear_load")
 
 
 if __name__ == "__main__":

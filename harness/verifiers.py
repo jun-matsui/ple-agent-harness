@@ -5094,3 +5094,132 @@ def verify_ashrae_fan_power_limitation(
         "power_limit_ok": power_limit_ok,
         "motor_capacity_ok": motor_capacity_ok,
     }
+
+
+def verify_aci_shear_friction(
+    vu_kips: float,
+    avf_in2: float,
+    ac_in2: float,
+    fc_psi: float,
+    fy_psi: float = 60000.0,
+    interface_type: str = "monolithic",
+    concrete_type: str = "normalweight",
+    compression_force_pc_kips: float = 0.0,
+    tension_force_nu_kips: float = 0.0,
+    reinforcement_angle_deg: float = 90.0,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 22.9 LRFD shear friction design check across concrete interfaces."""
+    scalars = [
+        vu_kips,
+        avf_in2,
+        ac_in2,
+        fc_psi,
+        fy_psi,
+        compression_force_pc_kips,
+        tension_force_nu_kips,
+        reinforcement_angle_deg,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if vu_kips < 0:
+        return {"pass": False, "reason": "negative_shear_load"}
+    if avf_in2 < 0:
+        return {"pass": False, "reason": "negative_reinforcement_area"}
+    if min(ac_in2, fc_psi, fy_psi, phi) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if compression_force_pc_kips < 0 or tension_force_nu_kips < 0:
+        return {"pass": False, "reason": "negative_clamping_force"}
+    if not (0.0 < reinforcement_angle_deg <= 90.0):
+        return {"pass": False, "reason": "invalid_reinforcement_angle"}
+
+    # Interface roughness classification and coefficient of friction mu (ACI 318-19 Table 22.9.4.2)
+    itype = interface_type.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_interfaces = {
+        "monolithic",
+        "roughened",
+        "hardened_roughened",
+        "smooth",
+        "non_roughened",
+        "structural_steel",
+    }
+    if itype not in valid_interfaces:
+        return {"pass": False, "reason": "invalid_interface_type"}
+
+    # Concrete density modification factor lambda (ACI 318-19 Table 19.2.4.2)
+    ctype = concrete_type.strip().lower().replace(" ", "_").replace("-", "_")
+    lambda_map: Dict[str, float] = {
+        "normalweight": 1.0,
+        "sand_lightweight": 0.85,
+        "all_lightweight": 0.75,
+    }
+    if ctype not in lambda_map:
+        return {"pass": False, "reason": "invalid_concrete_type"}
+    lambda_factor = lambda_map[ctype]
+
+    if itype == "monolithic":
+        mu = 1.4 * lambda_factor
+    elif itype in ("roughened", "hardened_roughened"):
+        mu = 1.0 * lambda_factor
+    elif itype in ("smooth", "non_roughened"):
+        mu = 0.6 * lambda_factor
+    else:  # structural_steel
+        mu = 0.7 * lambda_factor
+
+    # ACI 318-19 Table 20.2.2.4b: maximum fy for shear friction design is 60,000 psi
+    fy_effective_psi = min(fy_psi, 60000.0)
+
+    # ACI 318-19 Section 22.9.4.4: net tension across shear plane reduces effective clamping steel force
+    nu_lb = tension_force_nu_kips * 1000.0
+    total_steel_cap_lb = avf_in2 * fy_effective_psi
+    if nu_lb > total_steel_cap_lb:
+        return {
+            "pass": False,
+            "reason": "tension_exceeds_reinforcement_capacity",
+            "nu_kips": round(tension_force_nu_kips, 2),
+            "steel_capacity_kips": round(total_steel_cap_lb / 1000.0, 2),
+        }
+
+    clamping_steel_lb = total_steel_cap_lb - nu_lb
+    compression_lb = compression_force_pc_kips * 1000.0
+    alpha_rad = math.radians(reinforcement_angle_deg)
+
+    # ACI 318-19 Eq. 22.9.4.2 & 22.9.4.3 nominal shear friction strength
+    if abs(reinforcement_angle_deg - 90.0) < 1e-4:
+        vn_shear_friction_lb = (mu * clamping_steel_lb) + (mu * compression_lb)
+    else:
+        angle_multiplier = (mu * math.sin(alpha_rad)) + math.cos(alpha_rad)
+        vn_shear_friction_lb = (clamping_steel_lb * angle_multiplier) + (mu * compression_lb)
+
+    # ACI 318-19 Table 22.9.4.4 nominal shear strength upper bounds (Vn_max)
+    if ctype == "normalweight" and itype in ("monolithic", "roughened", "hardened_roughened"):
+        vn_max_lb = min(
+            0.20 * fc_psi * ac_in2,
+            (480.0 + 0.08 * fc_psi) * ac_in2,
+            1600.0 * ac_in2,
+        )
+    else:
+        vn_max_lb = min(
+            0.20 * fc_psi * ac_in2,
+            800.0 * ac_in2,
+        )
+
+    vn_lb = min(vn_shear_friction_lb, vn_max_lb)
+    vn_kips = vn_lb / 1000.0
+    phi_vn_kips = phi * vn_kips
+
+    dcr = vu_kips / phi_vn_kips if phi_vn_kips > 0 else float("inf")
+    limit_state = "shear_friction" if vn_shear_friction_lb <= vn_max_lb else "section_compression_limit"
+    passed = (dcr <= 1.0) and (vn_lb > 0.0)
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_vn_kips": round(phi_vn_kips, 2),
+        "vn_kips": round(vn_kips, 2),
+        "vn_shear_friction_kips": round(vn_shear_friction_lb / 1000.0, 2),
+        "vn_max_kips": round(vn_max_lb / 1000.0, 2),
+        "friction_coeff_mu": round(mu, 3),
+        "governing_limit_state": limit_state,
+    }
