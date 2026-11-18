@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_open_channel_hydraulic_jump,
     verify_nrcs_tr55_runoff,
     verify_asce7_snow_drift,
     verify_aisc_block_shear,
@@ -3533,6 +3534,93 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_cn["pass"])
         self.assertEqual(res_inv_cn["reason"], "invalid_curve_number")
+
+
+    def test_open_channel_hydraulic_jump(self) -> None:
+        from harness.verifiers import verify_open_channel_hydraulic_jump
+
+        # Standard passing steady hydraulic jump in spillway stilling basin
+        res_pass = verify_open_channel_hydraulic_jump(
+            discharge_cfs=360.0,
+            channel_width_ft=10.0,
+            upstream_depth_ft=1.0,
+            provided_basin_length_ft=60.0,
+            tailwater_depth_ft=8.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["jump_classification"], "steady")
+        self.assertAlmostEqual(res_pass["froude_upstream"], 6.347, places=2)
+        self.assertAlmostEqual(res_pass["sequent_depth_ft"], 8.490, places=2)
+        self.assertAlmostEqual(res_pass["required_basin_length_ft"], 50.94, places=1)
+        self.assertAlmostEqual(res_pass["head_loss_ft"], 12.37, places=1)
+        self.assertAlmostEqual(res_pass["dissipation_efficiency"], 0.585, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["length_ok"])
+        self.assertTrue(res_pass["froude_ok"])
+        self.assertTrue(res_pass["tailwater_ok"])
+
+        # Undersized basin length failure
+        res_fail_length = verify_open_channel_hydraulic_jump(
+            discharge_cfs=360.0,
+            channel_width_ft=10.0,
+            upstream_depth_ft=1.0,
+            provided_basin_length_ft=40.0,
+        )
+        self.assertFalse(res_fail_length["pass"])
+        self.assertFalse(res_fail_length["length_ok"])
+        self.assertGreater(res_fail_length["dcr"], 1.0)
+
+        # Subcritical upstream flow (jump cannot form)
+        res_subcritical = verify_open_channel_hydraulic_jump(
+            discharge_cfs=50.0,
+            channel_width_ft=10.0,
+            upstream_depth_ft=3.0,
+            provided_basin_length_ft=20.0,
+        )
+        self.assertFalse(res_subcritical["pass"])
+        self.assertEqual(res_subcritical["reason"], "upstream_flow_subcritical")
+
+        # Low Froude number (undular jump with inadequate dissipation)
+        res_weak = verify_open_channel_hydraulic_jump(
+            discharge_cfs=75.0,
+            channel_width_ft=10.0,
+            upstream_depth_ft=1.0,
+            provided_basin_length_ft=20.0,
+            min_froude_number=1.7,
+        )
+        self.assertFalse(res_weak["pass"])
+        self.assertFalse(res_weak["froude_ok"])
+        self.assertEqual(res_weak["jump_classification"], "undular")
+
+        # Tailwater sweepout failure (tailwater < 0.95 * y2)
+        res_sweepout = verify_open_channel_hydraulic_jump(
+            discharge_cfs=360.0,
+            channel_width_ft=10.0,
+            upstream_depth_ft=1.0,
+            provided_basin_length_ft=60.0,
+            tailwater_depth_ft=6.0,
+        )
+        self.assertFalse(res_sweepout["pass"])
+        self.assertFalse(res_sweepout["tailwater_ok"])
+
+        # Input error validation checks
+        res_nan = verify_open_channel_hydraulic_jump(
+            discharge_cfs=float("nan"),
+            channel_width_ft=10.0,
+            upstream_depth_ft=1.0,
+            provided_basin_length_ft=60.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_open_channel_hydraulic_jump(
+            discharge_cfs=-100.0,
+            channel_width_ft=10.0,
+            upstream_depth_ft=1.0,
+            provided_basin_length_ft=60.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_flow")
 
 
 if __name__ == "__main__":

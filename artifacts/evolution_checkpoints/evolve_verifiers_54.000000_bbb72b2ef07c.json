@@ -1,0 +1,9 @@
+{
+  "score": 54.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_open_channel_hydraulic_jump",
+    "rationale": "Implements the Belanger momentum equation, USBR jump classification, and energy dissipation head loss for rectangular stilling basins in Civil and Water Resources Engineering.",
+    "model": "gemini-3.8-flash"
+  }
+}

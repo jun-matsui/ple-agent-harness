@@ -3583,3 +3583,112 @@ def verify_nrcs_tr55_runoff(
         "runoff_fraction": round(runoff_fraction, 4),
         "runoff_generated": q_in > 0.0,
     }
+
+
+def verify_open_channel_hydraulic_jump(
+    discharge_cfs: float,
+    channel_width_ft: float,
+    upstream_depth_ft: float,
+    provided_basin_length_ft: float,
+    tailwater_depth_ft: float = 0.0,
+    min_froude_number: float = 1.7,
+    basin_length_factor: float = 6.0,
+    g_fps2: float = 32.174,
+) -> Dict[str, Any]:
+    """Civil/Water Resources hydraulic jump sequent depth, energy dissipation, and stilling basin length check."""
+    scalars = [
+        discharge_cfs,
+        channel_width_ft,
+        upstream_depth_ft,
+        provided_basin_length_ft,
+        tailwater_depth_ft,
+        min_froude_number,
+        basin_length_factor,
+        g_fps2,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            discharge_cfs,
+            channel_width_ft,
+            upstream_depth_ft,
+            provided_basin_length_ft,
+            basin_length_factor,
+            g_fps2,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_flow"}
+    if tailwater_depth_ft < 0:
+        return {"pass": False, "reason": "negative_tailwater_depth"}
+    if min_froude_number < 1.0:
+        return {"pass": False, "reason": "invalid_min_froude_number"}
+
+    # Upstream supercritical flow characteristics
+    area_1 = channel_width_ft * upstream_depth_ft
+    v1 = discharge_cfs / area_1
+    fr1 = v1 / math.sqrt(g_fps2 * upstream_depth_ft)
+    if fr1 <= 1.0:
+        return {
+            "pass": False,
+            "reason": "upstream_flow_subcritical",
+            "froude_upstream": round(fr1, 4),
+        }
+
+    # Belanger equation for hydraulic jump sequent depth (y2)
+    y2 = 0.5 * upstream_depth_ft * (math.sqrt(1.0 + 8.0 * (fr1**2)) - 1.0)
+
+    # Downstream subcritical flow characteristics
+    area_2 = channel_width_ft * y2
+    v2 = discharge_cfs / area_2
+    fr2 = v2 / math.sqrt(g_fps2 * y2)
+
+    # Upstream and downstream specific energy & energy dissipation head loss
+    e1 = upstream_depth_ft + (v1**2) / (2.0 * g_fps2)
+    e2 = y2 + (v2**2) / (2.0 * g_fps2)
+    delta_e = ((y2 - upstream_depth_ft) ** 3) / (4.0 * upstream_depth_ft * y2)
+    efficiency = delta_e / e1 if e1 > 0 else 0.0
+
+    # USBR stilling basin required length
+    req_basin_length_ft = basin_length_factor * y2
+    length_dcr = req_basin_length_ft / provided_basin_length_ft
+    length_ok = length_dcr <= 1.0
+
+    # USBR jump classification based on upstream Froude number
+    if fr1 < 1.7:
+        jump_class = "undular"
+    elif fr1 < 2.5:
+        jump_class = "weak"
+    elif fr1 < 4.5:
+        jump_class = "oscillating"
+    elif fr1 < 9.0:
+        jump_class = "steady"
+    else:
+        jump_class = "strong"
+
+    froude_ok = fr1 >= min_froude_number
+
+    # Tailwater adequacy check (preventing sweepout or drowning)
+    tw_ratio = None
+    tw_ok = True
+    if tailwater_depth_ft > 0.0:
+        tw_ratio = tailwater_depth_ft / y2
+        tw_ok = 0.95 <= tw_ratio <= 1.15
+
+    passed = length_ok and froude_ok and tw_ok
+    return {
+        "pass": passed,
+        "dcr": round(length_dcr, 4),
+        "froude_upstream": round(fr1, 3),
+        "froude_downstream": round(fr2, 3),
+        "sequent_depth_ft": round(y2, 3),
+        "head_loss_ft": round(delta_e, 3),
+        "dissipation_efficiency": round(efficiency, 4),
+        "required_basin_length_ft": round(req_basin_length_ft, 2),
+        "jump_classification": jump_class,
+        "tailwater_ratio": round(tw_ratio, 3) if tw_ratio is not None else None,
+        "length_ok": length_ok,
+        "froude_ok": froude_ok,
+        "tailwater_ok": tw_ok,
+    }
