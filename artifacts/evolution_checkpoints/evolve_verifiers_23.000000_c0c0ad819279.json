@@ -1,0 +1,9 @@
+{
+  "score": 23.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asce7_wind_pressure",
+    "rationale": "Adds ASCE 7-16/7-22 Chapter 26 and 27 Directional Procedure wind velocity pressure (qz) and Main Windforce Resisting System (MWFRS) net design wind pressure calculations to complete the structural lateral load verification suite alongside ASCE 7 seismic base shear.",
+    "model": "gemini-3.8-flash"
+  }
+}

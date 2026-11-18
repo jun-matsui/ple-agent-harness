@@ -995,3 +995,98 @@ def verify_pump_npsh(
         "h_atm_ft": round(h_atm, 3),
         "h_vp_ft": round(h_vp, 3),
     }
+
+
+def verify_asce7_wind_pressure(
+    basic_wind_speed_mph: float,
+    height_z_ft: float,
+    mean_roof_height_ft: float,
+    exposure_category: str = "C",
+    p_capacity_psf: float = 30.0,
+    kd_factor: float = 0.85,
+    kzt_factor: float = 1.0,
+    ke_factor: float = 1.0,
+    gust_factor_g: float = 0.85,
+    cp_windward: float = 0.80,
+    gc_pi: float = 0.18,
+    min_pressure_psf: float = 16.0,
+) -> Dict[str, Any]:
+    """ASCE 7-16/7-22 Section 26.10 & 27.3.1 MWFRS design wind pressure gate."""
+    inputs = [
+        basic_wind_speed_mph,
+        height_z_ft,
+        mean_roof_height_ft,
+        p_capacity_psf,
+        kd_factor,
+        kzt_factor,
+        ke_factor,
+        gust_factor_g,
+        cp_windward,
+        gc_pi,
+        min_pressure_psf,
+    ]
+    if any(math.isnan(val) for val in inputs):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            basic_wind_speed_mph,
+            height_z_ft,
+            mean_roof_height_ft,
+            p_capacity_psf,
+            kd_factor,
+            kzt_factor,
+            ke_factor,
+            gust_factor_g,
+            min_pressure_psf,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_velocity"}
+    if height_z_ft > mean_roof_height_ft:
+        return {"pass": False, "reason": "height_exceeds_roof_height"}
+
+    exposure = exposure_category.strip().upper()
+    # ASCE 7 Table 26.11-1 terrain exposure constants (alpha, zg)
+    exposure_constants: Dict[str, Tuple[float, float]] = {
+        "B": (7.0, 1200.0),
+        "C": (9.5, 900.0),
+        "D": (11.5, 700.0),
+    }
+    if exposure not in exposure_constants:
+        return {"pass": False, "reason": "invalid_exposure_category"}
+
+    alpha, zg = exposure_constants[exposure]
+
+    def calc_kz(z: float) -> float:
+        z_eff = max(15.0, min(z, zg))
+        return 2.01 * ((z_eff / zg) ** (2.0 / alpha))
+
+    kz = calc_kz(height_z_ft)
+    kh = calc_kz(mean_roof_height_ft)
+
+    # ASCE 7 Eq. 26.10-1 velocity pressure qz (psf)
+    coeff = 0.00256 * kzt_factor * kd_factor * ke_factor * (basic_wind_speed_mph**2)
+    qz = coeff * kz
+    qh = coeff * kh
+
+    # ASCE 7 Eq. 27.3-1 MWFRS net design wind pressure
+    p_external = qz * gust_factor_g * cp_windward
+    p_comb1 = p_external + (qh * abs(gc_pi))
+    p_comb2 = p_external - (qh * abs(gc_pi))
+    p_net_calc = max(abs(p_comb1), abs(p_comb2))
+
+    # ASCE 7 Section 27.1.5 minimum design wind pressure threshold
+    p_governing = max(p_net_calc, min_pressure_psf)
+    dcr = p_governing / p_capacity_psf
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "p_design_psf": round(p_governing, 2),
+        "p_net_psf": round(p_net_calc, 2),
+        "qz_psf": round(qz, 2),
+        "qh_psf": round(qh, 2),
+        "kz": round(kz, 4),
+        "kh": round(kh, 4),
+    }

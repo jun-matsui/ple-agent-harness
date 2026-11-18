@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asce7_wind_pressure,
     verify_pump_npsh,
     verify_aisc_bolted_connection,
     verify_ashrae_ventilation_rate,
@@ -810,6 +811,76 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_vp_err["pass"])
         self.assertEqual(res_vp_err["reason"], "vapor_pressure_exceeds_atmospheric")
+
+
+    def test_asce7_wind_pressure(self) -> None:
+        from harness.verifiers import verify_asce7_wind_pressure
+
+        res_pass = verify_asce7_wind_pressure(
+            basic_wind_speed_mph=115.0,
+            height_z_ft=30.0,
+            mean_roof_height_ft=30.0,
+            exposure_category="C",
+            p_capacity_psf=35.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertAlmostEqual(res_pass["kz"], 0.9823, places=2)
+        self.assertAlmostEqual(res_pass["p_design_psf"], 24.30, places=1)
+
+        res_fail_capacity = verify_asce7_wind_pressure(
+            basic_wind_speed_mph=160.0,
+            height_z_ft=30.0,
+            mean_roof_height_ft=30.0,
+            exposure_category="C",
+            p_capacity_psf=30.0,
+        )
+        self.assertFalse(res_fail_capacity["pass"])
+        self.assertGreater(res_fail_capacity["dcr"], 1.0)
+
+        res_min_pressure = verify_asce7_wind_pressure(
+            basic_wind_speed_mph=50.0,
+            height_z_ft=15.0,
+            mean_roof_height_ft=15.0,
+            exposure_category="B",
+            p_capacity_psf=20.0,
+            min_pressure_psf=16.0,
+        )
+        self.assertTrue(res_min_pressure["pass"])
+        self.assertEqual(res_min_pressure["p_design_psf"], 16.0)
+
+        res_height_err = verify_asce7_wind_pressure(
+            basic_wind_speed_mph=115.0,
+            height_z_ft=40.0,
+            mean_roof_height_ft=30.0,
+        )
+        self.assertFalse(res_height_err["pass"])
+        self.assertEqual(res_height_err["reason"], "height_exceeds_roof_height")
+
+        res_exposure_err = verify_asce7_wind_pressure(
+            basic_wind_speed_mph=115.0,
+            height_z_ft=30.0,
+            mean_roof_height_ft=30.0,
+            exposure_category="A",
+        )
+        self.assertFalse(res_exposure_err["pass"])
+        self.assertEqual(res_exposure_err["reason"], "invalid_exposure_category")
+
+        res_nan = verify_asce7_wind_pressure(
+            basic_wind_speed_mph=float("nan"),
+            height_z_ft=30.0,
+            mean_roof_height_ft=30.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_asce7_wind_pressure(
+            basic_wind_speed_mph=-115.0,
+            height_z_ft=30.0,
+            mean_roof_height_ft=30.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_velocity")
 
 
 if __name__ == "__main__":
