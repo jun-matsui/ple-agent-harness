@@ -1,0 +1,9 @@
+{
+  "score": 75.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_spread_footing",
+    "rationale": "Evaluates ACI 318-19 Chapter 13 structural concrete spread footing one-way beam shear, critical section flexure at column face, and minimum flexural reinforcement requirements to close a high-frequency licensing exam gap between geotechnical bearing and structural foundation detailing.",
+    "model": "gemini-3.8-flash"
+  }
+}

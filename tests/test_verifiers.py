@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_spread_footing,
     verify_nfpa20_fire_pump_performance,
     verify_aci_anchor_bolt_tension,
     verify_ite_signal_clearance_intervals,
@@ -5841,6 +5842,143 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_curve_err["pass"])
         self.assertEqual(res_curve_err["reason"], "churn_pressure_below_rated_pressure")
+
+
+    def test_aci_spread_footing(self) -> None:
+        from harness.verifiers import verify_aci_spread_footing
+
+        # Standard passing isolated square footing under 450 kip column load
+        res_pass = verify_aci_spread_footing(
+            pu_kips=450.0,
+            footing_length_ft=9.0,
+            footing_width_ft=9.0,
+            footing_thickness_in=24.0,
+            effective_depth_d_in=19.5,
+            column_width_in=18.0,
+            column_depth_in=18.0,
+            as_provided_in2=7.90,
+            fc_psi=4000.0,
+            fy_psi=60000.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["qu_ksf"], 5.5556, places=3)
+        self.assertAlmostEqual(res_pass["cantilever_in"], 45.0, places=1)
+        self.assertAlmostEqual(res_pass["vu_kips"], 106.25, places=1)
+        self.assertAlmostEqual(res_pass["phi_vc_kips"], 199.78, places=1)
+        self.assertAlmostEqual(res_pass["mu_kip_ft"], 351.56, places=1)
+        self.assertAlmostEqual(res_pass["phi_mn_kip_ft"], 670.28, places=1)
+        self.assertAlmostEqual(res_pass["as_min_in2"], 4.666, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["shear_ok"])
+        self.assertTrue(res_pass["flexure_ok"])
+        self.assertTrue(res_pass["as_min_ok"])
+
+        # Reduced footing thickness and effective depth causing one-way shear failure
+        res_shear_fail = verify_aci_spread_footing(
+            pu_kips=450.0,
+            footing_length_ft=9.0,
+            footing_width_ft=9.0,
+            footing_thickness_in=16.0,
+            effective_depth_d_in=11.5,
+            column_width_in=18.0,
+            column_depth_in=18.0,
+            as_provided_in2=7.90,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_shear_fail["pass"])
+        self.assertFalse(res_shear_fail["shear_ok"])
+        self.assertGreater(res_shear_fail["shear_dcr"], 1.0)
+
+        # Undersized flexural steel causing moment capacity failure
+        res_flex_fail = verify_aci_spread_footing(
+            pu_kips=450.0,
+            footing_length_ft=9.0,
+            footing_width_ft=9.0,
+            footing_thickness_in=24.0,
+            effective_depth_d_in=19.5,
+            column_width_in=18.0,
+            column_depth_in=18.0,
+            as_provided_in2=3.50,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_flex_fail["pass"])
+        self.assertFalse(res_flex_fail["flexure_ok"])
+        self.assertGreater(res_flex_fail["flexure_dcr"], 1.0)
+
+        # Reinforcement below ACI 318 minimum shrinkage and temperature steel
+        res_min_fail = verify_aci_spread_footing(
+            pu_kips=200.0,
+            footing_length_ft=9.0,
+            footing_width_ft=9.0,
+            footing_thickness_in=24.0,
+            effective_depth_d_in=19.5,
+            column_width_in=18.0,
+            column_depth_in=18.0,
+            as_provided_in2=4.00,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_min_fail["pass"])
+        self.assertFalse(res_min_fail["as_min_ok"])
+        self.assertGreater(res_min_fail["as_min_in2"], 4.00)
+
+        # Effective depth d exceeds total thickness h error
+        res_depth_err = verify_aci_spread_footing(
+            pu_kips=300.0,
+            footing_length_ft=8.0,
+            footing_width_ft=8.0,
+            footing_thickness_in=20.0,
+            effective_depth_d_in=22.0,
+            column_width_in=16.0,
+            column_depth_in=16.0,
+            as_provided_in2=5.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_depth_err["pass"])
+        self.assertEqual(res_depth_err["reason"], "effective_depth_exceeds_thickness")
+
+        # Column dimensions exceeding footing footprint error
+        res_col_err = verify_aci_spread_footing(
+            pu_kips=300.0,
+            footing_length_ft=4.0,
+            footing_width_ft=4.0,
+            footing_thickness_in=20.0,
+            effective_depth_d_in=16.0,
+            column_width_in=54.0,
+            column_depth_in=16.0,
+            as_provided_in2=5.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_col_err["pass"])
+        self.assertEqual(res_col_err["reason"], "column_exceeds_footing_dimensions")
+
+        # Input error validation checks
+        res_nan = verify_aci_spread_footing(
+            pu_kips=float("nan"),
+            footing_length_ft=9.0,
+            footing_width_ft=9.0,
+            footing_thickness_in=24.0,
+            effective_depth_d_in=19.5,
+            column_width_in=18.0,
+            column_depth_in=18.0,
+            as_provided_in2=7.90,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_spread_footing(
+            pu_kips=-100.0,
+            footing_length_ft=9.0,
+            footing_width_ft=9.0,
+            footing_thickness_in=24.0,
+            effective_depth_d_in=19.5,
+            column_width_in=18.0,
+            column_depth_in=18.0,
+            as_provided_in2=7.90,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
 
 
 if __name__ == "__main__":

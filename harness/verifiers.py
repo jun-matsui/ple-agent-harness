@@ -6000,3 +6000,120 @@ def verify_nfpa20_fire_pump_performance(
         "suction_ok": suction_ok,
         "motor_ok": motor_ok,
     }
+
+
+def verify_aci_spread_footing(
+    pu_kips: float,
+    footing_length_ft: float,
+    footing_width_ft: float,
+    footing_thickness_in: float,
+    effective_depth_d_in: float,
+    column_width_in: float,
+    column_depth_in: float,
+    as_provided_in2: float,
+    fc_psi: float,
+    fy_psi: float = 60000.0,
+    lambda_factor: float = 1.0,
+    phi_shear: float = 0.75,
+    phi_flexure: float = 0.90,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 13.2 & 13.3 structural spread footing one-way shear, flexural capacity, and minimum reinforcement check."""
+    scalars = [
+        pu_kips,
+        footing_length_ft,
+        footing_width_ft,
+        footing_thickness_in,
+        effective_depth_d_in,
+        column_width_in,
+        column_depth_in,
+        as_provided_in2,
+        fc_psi,
+        fy_psi,
+        lambda_factor,
+        phi_shear,
+        phi_flexure,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if pu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(
+            footing_length_ft,
+            footing_width_ft,
+            footing_thickness_in,
+            effective_depth_d_in,
+            column_width_in,
+            column_depth_in,
+            as_provided_in2,
+            fc_psi,
+            fy_psi,
+            lambda_factor,
+            phi_shear,
+            phi_flexure,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if effective_depth_d_in >= footing_thickness_in:
+        return {"pass": False, "reason": "effective_depth_exceeds_thickness"}
+    if column_width_in >= (footing_length_ft * 12.0) or column_depth_in >= (footing_width_ft * 12.0):
+        return {"pass": False, "reason": "column_exceeds_footing_dimensions"}
+
+    # Factored net soil bearing pressure (ksf)
+    footing_area_sqft = footing_length_ft * footing_width_ft
+    qu_ksf = pu_kips / footing_area_sqft
+
+    # Cantilever projection from column face in the checked length direction (in)
+    l_cant_in = (footing_length_ft * 12.0 - column_width_in) / 2.0
+    bw_in = footing_width_ft * 12.0
+
+    # 1. One-way (beam) shear at distance d from column face (ACI 318-19 Section 13.2.7.2)
+    l_shear_in = max(0.0, l_cant_in - effective_depth_d_in)
+    vu_kips = qu_ksf * footing_width_ft * (l_shear_in / 12.0)
+
+    # ACI Table 22.5.5.1 simplified one-way shear strength without axial force
+    sqrt_fc = math.sqrt(fc_psi)
+    vc_kips = (2.0 * lambda_factor * sqrt_fc * bw_in * effective_depth_d_in) / 1000.0
+    phi_vc_kips = phi_shear * vc_kips
+    shear_dcr = vu_kips / phi_vc_kips if phi_vc_kips > 0 else float("inf")
+    shear_ok = shear_dcr <= 1.0
+
+    # 2. Flexural moment at column face (ACI 318-19 Section 13.2.6.2)
+    l_cant_ft = l_cant_in / 12.0
+    mu_kip_ft = qu_ksf * footing_width_ft * (l_cant_ft**2) / 2.0
+
+    # Depth of equivalent rectangular compressive stress block (a)
+    a_in = (as_provided_in2 * fy_psi) / (0.85 * fc_psi * bw_in)
+    if a_in >= effective_depth_d_in:
+        return {"pass": False, "reason": "compression_block_exceeds_depth"}
+
+    mn_kip_in = as_provided_in2 * fy_psi * (effective_depth_d_in - a_in / 2.0) / 1000.0
+    phi_mn_kip_ft = (phi_flexure * mn_kip_in) / 12.0
+    flex_dcr = mu_kip_ft / phi_mn_kip_ft if phi_mn_kip_ft > 0 else float("inf")
+    flex_ok = flex_dcr <= 1.0
+
+    # 3. Minimum flexural / shrinkage-temperature reinforcement (ACI 318-19 Section 7.6.1.1 & 13.3.2.1)
+    as_min_in2 = 0.0018 * bw_in * footing_thickness_in
+    as_min_ok = as_provided_in2 >= as_min_in2
+    as_min_dcr = as_min_in2 / as_provided_in2
+
+    gov_dcr = max(shear_dcr, flex_dcr, as_min_dcr)
+    passed = shear_ok and flex_ok and as_min_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "shear_dcr": round(shear_dcr, 4),
+        "flexure_dcr": round(flex_dcr, 4),
+        "vu_kips": round(vu_kips, 2),
+        "phi_vc_kips": round(phi_vc_kips, 2),
+        "mu_kip_ft": round(mu_kip_ft, 2),
+        "phi_mn_kip_ft": round(phi_mn_kip_ft, 2),
+        "as_min_in2": round(as_min_in2, 3),
+        "qu_ksf": round(qu_ksf, 4),
+        "cantilever_in": round(l_cant_in, 2),
+        "shear_ok": shear_ok,
+        "flexure_ok": flex_ok,
+        "as_min_ok": as_min_ok,
+    }
