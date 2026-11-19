@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_feeder_tap_rules,
     verify_aci_concrete_shear_wall,
     verify_aisc_plate_girder_shear,
     verify_ashrae_ahu_psychrometric_mixing,
@@ -6367,6 +6368,115 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_curtain_err["pass"])
         self.assertEqual(res_curtain_err["reason"], "invalid_curtain_count")
+
+
+    def test_nec_feeder_tap_rules(self) -> None:
+        from harness.verifiers import verify_nec_feeder_tap_rules
+
+        # Standard passing 10-foot tap: 400A feeder, 8 ft tap, 100A termination breaker, 100A wire
+        res_10ft_pass = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=400.0,
+            tap_conductor_ampacity_a=100.0,
+            tap_length_ft=8.0,
+            termination_ocpd_a=100.0,
+            calculated_load_a=80.0,
+        )
+        self.assertTrue(res_10ft_pass["pass"])
+        self.assertEqual(res_10ft_pass["tap_rule_applied"], "10_foot")
+        self.assertEqual(res_10ft_pass["feeder_ocpd_ratio_ampacity_a"], 40.0)
+        self.assertEqual(res_10ft_pass["min_tap_ampacity_a"], 100.0)
+        self.assertAlmostEqual(res_10ft_pass["ampacity_dcr"], 1.0, places=3)
+        self.assertLessEqual(res_10ft_pass["dcr"], 1.0)
+        self.assertTrue(res_10ft_pass["ampacity_ok"])
+        self.assertTrue(res_10ft_pass["termination_ok"])
+        self.assertTrue(res_10ft_pass["enclosure_ok"])
+
+        # 10-foot tap failure: tap wire undersized for termination breaker (wire 70A < breaker 100A)
+        res_10ft_fail = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=400.0,
+            tap_conductor_ampacity_a=70.0,
+            tap_length_ft=8.0,
+            termination_ocpd_a=100.0,
+        )
+        self.assertFalse(res_10ft_fail["pass"])
+        self.assertFalse(res_10ft_fail["ampacity_ok"])
+        self.assertFalse(res_10ft_fail["termination_ok"])
+        self.assertGreater(res_10ft_fail["dcr"], 1.0)
+
+        # Standard passing 25-foot tap: 600A feeder, 20 ft tap, 200A termination breaker, 200A wire
+        # 1/3 of feeder = 200A; wire = 200A
+        res_25ft_pass = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=600.0,
+            tap_conductor_ampacity_a=200.0,
+            tap_length_ft=20.0,
+            termination_ocpd_a=200.0,
+            calculated_load_a=160.0,
+        )
+        self.assertTrue(res_25ft_pass["pass"])
+        self.assertEqual(res_25ft_pass["tap_rule_applied"], "25_foot")
+        self.assertEqual(res_25ft_pass["feeder_ocpd_ratio_ampacity_a"], 200.0)
+        self.assertLessEqual(res_25ft_pass["dcr"], 1.0)
+
+        # 25-foot tap failure: wire ampacity less than 1/3 feeder OCPD (150A < 200A)
+        res_25ft_fail = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=600.0,
+            tap_conductor_ampacity_a=150.0,
+            tap_length_ft=20.0,
+            termination_ocpd_a=150.0,
+        )
+        self.assertFalse(res_25ft_fail["pass"])
+        self.assertFalse(res_25ft_fail["ampacity_ok"])
+        self.assertGreater(res_25ft_fail["ampacity_dcr"], 1.0)
+
+        # Length exceeds 25 ft maximum allowable feeder tap distance
+        res_length_fail = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=400.0,
+            tap_conductor_ampacity_a=200.0,
+            tap_length_ft=30.0,
+            termination_ocpd_a=200.0,
+        )
+        self.assertFalse(res_length_fail["pass"])
+        self.assertEqual(res_length_fail["reason"], "tap_length_exceeds_maximum_25ft")
+
+        # Physical protection failure: not enclosed in raceway
+        res_raceway_fail = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=400.0,
+            tap_conductor_ampacity_a=100.0,
+            tap_length_ft=8.0,
+            termination_ocpd_a=100.0,
+            enclosed_in_raceway=False,
+        )
+        self.assertFalse(res_raceway_fail["pass"])
+        self.assertFalse(res_raceway_fail["enclosure_ok"])
+
+        # Input error validation checks
+        res_nan = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=float("nan"),
+            tap_conductor_ampacity_a=100.0,
+            tap_length_ft=8.0,
+            termination_ocpd_a=100.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=-400.0,
+            tap_conductor_ampacity_a=100.0,
+            tap_length_ft=8.0,
+            termination_ocpd_a=100.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_rating_or_geometry")
+
+        res_inv_rule = verify_nec_feeder_tap_rules(
+            feeder_ocpd_a=400.0,
+            tap_conductor_ampacity_a=100.0,
+            tap_length_ft=8.0,
+            termination_ocpd_a=100.0,
+            tap_rule="50_foot",
+        )
+        self.assertFalse(res_inv_rule["pass"])
+        self.assertEqual(res_inv_rule["reason"], "invalid_tap_rule")
 
 
 if __name__ == "__main__":

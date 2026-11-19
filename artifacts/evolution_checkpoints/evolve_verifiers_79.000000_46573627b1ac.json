@@ -1,0 +1,9 @@
+{
+  "score": 79.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_feeder_tap_rules",
+    "rationale": "Applies NEC 240.21(B)(1) and 240.21(B)(2) 10-foot and 25-foot feeder tap rules, ensuring tap conductor ampacity, termination overcurrent protection, length limits, and raceway enclosure criteria are deterministically satisfied.",
+    "model": "gemini-3.8-flash"
+  }
+}

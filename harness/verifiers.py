@@ -6465,3 +6465,86 @@ def verify_aci_concrete_shear_wall(
         "rho_l_ok": rho_l_ok,
         "curtains_ok": curtains_ok,
     }
+
+
+def verify_nec_feeder_tap_rules(
+    feeder_ocpd_a: float,
+    tap_conductor_ampacity_a: float,
+    tap_length_ft: float,
+    termination_ocpd_a: float,
+    calculated_load_a: float = 0.0,
+    tap_rule: str = "auto",
+    enclosed_in_raceway: bool = True,
+) -> Dict[str, Any]:
+    """NEC 240.21(B)(1) & 240.21(B)(2) 10-ft and 25-ft feeder tap rule compliance check."""
+    scalars = [
+        feeder_ocpd_a,
+        tap_conductor_ampacity_a,
+        tap_length_ft,
+        termination_ocpd_a,
+        calculated_load_a,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(feeder_ocpd_a, tap_conductor_ampacity_a, tap_length_ft, termination_ocpd_a)
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_rating_or_geometry"}
+    if calculated_load_a < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+
+    rule_clean = tap_rule.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_rules = {"auto", "10_foot", "10", "25_foot", "25"}
+    if rule_clean not in valid_rules:
+        return {"pass": False, "reason": "invalid_tap_rule"}
+
+    if rule_clean in ("10_foot", "10"):
+        rule = "10_foot"
+    elif rule_clean in ("25_foot", "25"):
+        rule = "25_foot"
+    else:
+        if tap_length_ft <= 10.0:
+            rule = "10_foot"
+        elif tap_length_ft <= 25.0:
+            rule = "25_foot"
+        else:
+            return {"pass": False, "reason": "tap_length_exceeds_maximum_25ft"}
+
+    if rule == "10_foot":
+        if tap_length_ft > 10.0:
+            return {"pass": False, "reason": "length_exceeds_10ft_for_rule"}
+        min_ampacity_ratio = 0.10 * feeder_ocpd_a
+        min_tap_ampacity = max(calculated_load_a, termination_ocpd_a, min_ampacity_ratio)
+        length_dcr = tap_length_ft / 10.0
+    else:
+        if tap_length_ft > 25.0:
+            return {"pass": False, "reason": "length_exceeds_25ft_for_rule"}
+        min_ampacity_ratio = (1.0 / 3.0) * feeder_ocpd_a
+        min_tap_ampacity = max(calculated_load_a, min_ampacity_ratio)
+        length_dcr = tap_length_ft / 25.0
+
+    ampacity_dcr = min_tap_ampacity / tap_conductor_ampacity_a
+    ampacity_ok = tap_conductor_ampacity_a >= min_tap_ampacity
+
+    termination_dcr = termination_ocpd_a / tap_conductor_ampacity_a
+    termination_ok = termination_ocpd_a <= tap_conductor_ampacity_a
+
+    enclosure_ok = enclosed_in_raceway
+    gov_dcr = max(ampacity_dcr, termination_dcr, length_dcr)
+
+    passed = ampacity_ok and termination_ok and enclosure_ok and (length_dcr <= 1.0)
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "ampacity_dcr": round(ampacity_dcr, 4),
+        "termination_dcr": round(termination_dcr, 4),
+        "length_dcr": round(length_dcr, 4),
+        "min_tap_ampacity_a": round(min_tap_ampacity, 2),
+        "feeder_ocpd_ratio_ampacity_a": round(min_ampacity_ratio, 2),
+        "tap_rule_applied": rule,
+        "ampacity_ok": ampacity_ok,
+        "termination_ok": termination_ok,
+        "enclosure_ok": enclosure_ok,
+    }
