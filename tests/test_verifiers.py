@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_ieee1584_arc_flash_hazard,
     verify_aci_prestressed_concrete_stresses,
     verify_aisc_composite_beam_flexure,
     verify_nds_timber_beam_flexure_and_shear,
@@ -7104,6 +7105,106 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_class_err["pass"])
         self.assertEqual(res_class_err["reason"], "invalid_beam_class")
+
+
+    def test_ieee1584_arc_flash_hazard(self) -> None:
+        from harness.verifiers import verify_ieee1584_arc_flash_hazard
+
+        # Standard passing 480V switchgear check with fast breaker clearing
+        # 25 kA bolted fault, 480V, 0.10s duration, 18 in distance, 8 cal/cm2 PPE rating
+        res_pass = verify_ieee1584_arc_flash_hazard(
+            bolted_fault_current_ka=25.0,
+            voltage_kv=0.48,
+            arc_duration_s=0.10,
+            working_distance_in=18.0,
+            equipment_type="switchgear",
+            grounding_type="solidly_grounded",
+            ppe_rating_cal_cm2=8.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["arcing_current_ka"], 13.48, places=1)
+        self.assertAlmostEqual(res_pass["incident_energy_cal_cm2"], 4.44, places=1)
+        self.assertEqual(res_pass["ppe_category"], "category_2")
+        self.assertAlmostEqual(res_pass["dcr"], 4.44 / 8.0, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["ppe_adequate"])
+        self.assertFalse(res_pass["extreme_danger"])
+        self.assertGreater(res_pass["arc_flash_boundary_in"], 18.0)
+
+        # Longer clearing time exceeding PPE rating failure
+        res_ppe_fail = verify_ieee1584_arc_flash_hazard(
+            bolted_fault_current_ka=25.0,
+            voltage_kv=0.48,
+            arc_duration_s=0.25,
+            working_distance_in=18.0,
+            equipment_type="switchgear",
+            ppe_rating_cal_cm2=8.0,
+        )
+        self.assertFalse(res_ppe_fail["pass"])
+        self.assertFalse(res_ppe_fail["ppe_adequate"])
+        self.assertGreater(res_ppe_fail["incident_energy_cal_cm2"], 8.0)
+        self.assertGreater(res_ppe_fail["dcr"], 1.0)
+
+        # Extreme danger condition (> 40 cal/cm2 where energized work is prohibited)
+        res_extreme = verify_ieee1584_arc_flash_hazard(
+            bolted_fault_current_ka=40.0,
+            voltage_kv=0.48,
+            arc_duration_s=1.0,
+            working_distance_in=18.0,
+            ppe_rating_cal_cm2=50.0,
+        )
+        self.assertFalse(res_extreme["pass"])
+        self.assertTrue(res_extreme["extreme_danger"])
+        self.assertEqual(res_extreme["ppe_category"], "extreme_danger_above_40_cal")
+
+        # Medium-voltage (4.16 kV) equipment check
+        res_mv = verify_ieee1584_arc_flash_hazard(
+            bolted_fault_current_ka=15.0,
+            voltage_kv=4.16,
+            arc_duration_s=0.15,
+            working_distance_in=36.0,
+            equipment_type="switchgear",
+            ppe_rating_cal_cm2=10.0,
+        )
+        self.assertTrue(res_mv["pass"])
+        self.assertAlmostEqual(res_mv["arcing_current_ka"], 14.47, places=1)
+        self.assertLess(res_mv["dcr"], 1.0)
+
+        # Open-air equipment check
+        res_open = verify_ieee1584_arc_flash_hazard(
+            bolted_fault_current_ka=20.0,
+            voltage_kv=0.48,
+            arc_duration_s=0.10,
+            equipment_type="open_air",
+        )
+        self.assertTrue(res_open["pass"])
+        self.assertLess(res_open["incident_energy_cal_cm2"], res_pass["incident_energy_cal_cm2"])
+
+        # Input error validation checks
+        res_nan = verify_ieee1584_arc_flash_hazard(
+            bolted_fault_current_ka=float("nan"),
+            voltage_kv=0.48,
+            arc_duration_s=0.10,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_ieee1584_arc_flash_hazard(
+            bolted_fault_current_ka=-25.0,
+            voltage_kv=0.48,
+            arc_duration_s=0.10,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_fault_current")
+
+        res_inv_eq = verify_ieee1584_arc_flash_hazard(
+            bolted_fault_current_ka=25.0,
+            voltage_kv=0.48,
+            arc_duration_s=0.10,
+            equipment_type="generator_rotor",
+        )
+        self.assertFalse(res_inv_eq["pass"])
+        self.assertEqual(res_inv_eq["reason"], "invalid_equipment_type")
 
 
 if __name__ == "__main__":

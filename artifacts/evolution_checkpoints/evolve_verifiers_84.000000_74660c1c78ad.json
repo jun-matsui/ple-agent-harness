@@ -1,0 +1,9 @@
+{
+  "score": 84.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ieee1584_arc_flash_hazard",
+    "rationale": "Implements IEEE 1584-2002 and NFPA 70E arc-flash incident energy, arcing current, arc-flash boundary, and PPE category compliance checks for low- and medium-voltage electrical power distribution equipment.",
+    "model": "gemini-3.8-flash"
+  }
+}

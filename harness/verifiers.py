@@ -7128,3 +7128,152 @@ def verify_aci_prestressed_concrete_stresses(
         "transfer_ok": ti_ok and bi_ok,
         "service_ok": ts_ok and tt_ok and bt_ok,
     }
+
+
+def verify_ieee1584_arc_flash_hazard(
+    bolted_fault_current_ka: float,
+    voltage_kv: float,
+    arc_duration_s: float,
+    working_distance_in: float = 18.0,
+    equipment_type: str = "switchgear",
+    grounding_type: str = "solidly_grounded",
+    gap_mm: float = 0.0,
+    ppe_rating_cal_cm2: float = 8.0,
+) -> Dict[str, Any]:
+    """IEEE 1584 & NFPA 70E electrical arc-flash hazard, incident energy, boundary, and PPE category gate."""
+    scalars = [
+        bolted_fault_current_ka,
+        voltage_kv,
+        arc_duration_s,
+        working_distance_in,
+        gap_mm,
+        ppe_rating_cal_cm2,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if bolted_fault_current_ka <= 0:
+        return {"pass": False, "reason": "non_positive_fault_current"}
+    if voltage_kv <= 0:
+        return {"pass": False, "reason": "non_positive_voltage"}
+    if arc_duration_s <= 0:
+        return {"pass": False, "reason": "non_positive_arc_duration"}
+    if working_distance_in <= 0:
+        return {"pass": False, "reason": "non_positive_working_distance"}
+    if ppe_rating_cal_cm2 <= 0:
+        return {"pass": False, "reason": "non_positive_ppe_rating"}
+    if gap_mm < 0:
+        return {"pass": False, "reason": "negative_gap"}
+
+    eq_clean = equipment_type.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_equipment = {"switchgear", "switchboard", "panelboard", "panel", "mcc", "open_air", "cable"}
+    if eq_clean not in valid_equipment:
+        return {"pass": False, "reason": "invalid_equipment_type"}
+
+    is_open = eq_clean == "open_air"
+    is_panel_mcc = eq_clean in ("panelboard", "panel", "mcc")
+    is_cable = eq_clean == "cable"
+
+    gr_clean = grounding_type.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_grounding = {"solidly_grounded", "grounded", "ungrounded", "resistance_grounded", "high_resistance", "hrg"}
+    if gr_clean not in valid_grounding:
+        return {"pass": False, "reason": "invalid_grounding_type"}
+    is_grounded = gr_clean in ("solidly_grounded", "grounded")
+
+    # Default conductor gap G (mm) per IEEE 1584 Table 4
+    if gap_mm > 0.0:
+        g = gap_mm
+    elif voltage_kv < 1.0:
+        if is_cable:
+            g = 13.0
+        elif is_panel_mcc:
+            g = 25.0
+        else:
+            g = 32.0
+    elif voltage_kv <= 5.0:
+        g = 13.0 if is_cable else 102.0
+    else:
+        g = 152.0
+
+    # Distance exponent x per IEEE 1584 Table 5
+    if is_open or is_cable:
+        x = 2.000
+    elif voltage_kv < 1.0:
+        x = 1.641 if is_panel_mcc else 1.473
+    else:
+        x = 0.973
+
+    log_ibf = math.log10(bolted_fault_current_ka)
+
+    # IEEE 1584 arcing current Ia (kA)
+    if voltage_kv < 1.0:
+        k_const = -0.153 if is_open else -0.097
+        log_ia = (
+            k_const
+            + 0.662 * log_ibf
+            + 0.0966 * voltage_kv
+            + 0.000526 * g
+            + 0.5588 * voltage_kv * log_ibf
+            - 0.00304 * g * log_ibf
+        )
+        i_a = 10.0 ** log_ia
+    else:
+        log_ia = 0.00402 + 0.983 * log_ibf
+        i_a = 10.0 ** log_ia
+
+    # Normalized incident energy En (cal/cm2 at 610 mm for 0.2s duration)
+    k1 = -0.792 if is_open else -0.555
+    k2 = -0.113 if is_grounded else 0.0
+    log_en = k1 + k2 + 1.081 * math.log10(i_a) + 0.0011 * g
+    e_n = 10.0 ** log_en
+
+    # Voltage factor Cf
+    c_f = 1.5 if voltage_kv <= 1.0 else 1.0
+
+    # Convert working distance from inches to mm
+    working_distance_mm = working_distance_in * 25.4
+
+    # Incident energy E (cal/cm2) and (J/cm2)
+    e_incident_cal = c_f * e_n * (arc_duration_s / 0.20) * ((610.0 / working_distance_mm) ** x)
+    e_incident_j = e_incident_cal * 4.184
+
+    # Arc Flash Boundary Db (where E = 1.2 cal/cm2)
+    ratio_b = (c_f * e_n * (arc_duration_s / 0.20) / 1.20)
+    if ratio_b > 0.0:
+        d_b_mm = 610.0 * (ratio_b ** (1.0 / x))
+        arc_flash_boundary_in = d_b_mm / 25.4
+    else:
+        arc_flash_boundary_in = 0.0
+
+    # NFPA 70E PPE category designation
+    if e_incident_cal <= 1.2:
+        ppe_cat = "category_0"
+    elif e_incident_cal <= 4.0:
+        ppe_cat = "category_1"
+    elif e_incident_cal <= 8.0:
+        ppe_cat = "category_2"
+    elif e_incident_cal <= 25.0:
+        ppe_cat = "category_3"
+    elif e_incident_cal <= 40.0:
+        ppe_cat = "category_4"
+    else:
+        ppe_cat = "extreme_danger_above_40_cal"
+
+    dcr = e_incident_cal / ppe_rating_cal_cm2
+    ppe_adequate = dcr <= 1.0
+    extreme_danger = e_incident_cal > 40.0
+
+    passed = ppe_adequate and not extreme_danger
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "incident_energy_cal_cm2": round(e_incident_cal, 2),
+        "incident_energy_j_cm2": round(e_incident_j, 2),
+        "arc_flash_boundary_in": round(arc_flash_boundary_in, 2),
+        "arcing_current_ka": round(i_a, 3),
+        "ppe_category": ppe_cat,
+        "working_distance_in": round(working_distance_in, 1),
+        "arc_duration_s": round(arc_duration_s, 3),
+        "bolted_fault_current_ka": round(bolted_fault_current_ka, 2),
+        "ppe_adequate": ppe_adequate,
+        "extreme_danger": extreme_danger,
+    }
