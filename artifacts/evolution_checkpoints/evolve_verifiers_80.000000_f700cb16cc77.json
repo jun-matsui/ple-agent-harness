@@ -1,0 +1,9 @@
+{
+  "score": 80.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_panel_zone_shear",
+    "rationale": "AISC 360-16 Section J10.6 governs beam-column web panel zone shear strength, panel-zone deformation effects, and column doubler plate requirements in structural steel moment-frame joints, filling a critical high-frequency gap in structural code-gate verifiers.",
+    "model": "gemini-3.8-flash"
+  }
+}

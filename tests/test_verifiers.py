@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_panel_zone_shear,
     verify_nec_feeder_tap_rules,
     verify_aci_concrete_shear_wall,
     verify_aisc_plate_girder_shear,
@@ -6477,6 +6478,148 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_rule["pass"])
         self.assertEqual(res_inv_rule["reason"], "invalid_tap_rule")
+
+
+    def test_aisc_panel_zone_shear(self) -> None:
+        from harness.verifiers import verify_aisc_panel_zone_shear
+
+        # Standard passing W14x120 column with W24x68 beam connection under Eq. J10-9 (Pr <= 0.40 Pc)
+        res_pass = verify_aisc_panel_zone_shear(
+            dc_in=14.48,
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=0.940,
+            db_in=23.73,
+            ag_in2=35.3,
+            vu_kips=200.0,
+            pr_kips=300.0,
+            fy_ksi=50.0,
+            consider_deformation=False,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["governing_equation"], "J10-9")
+        self.assertFalse(res_pass["doubler_required"])
+        self.assertAlmostEqual(res_pass["pc_kips"], 1765.0, places=1)
+        self.assertAlmostEqual(res_pass["pr_ratio"], 300.0 / 1765.0, places=3)
+        self.assertAlmostEqual(res_pass["rn_kips"], 256.296, places=1)
+        self.assertAlmostEqual(res_pass["phi_rn_kips"], 230.67, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 200.0 / 230.6664, places=3)
+
+        # Frame stability deformation considered enhancement (Eq. J10-11)
+        res_deform = verify_aisc_panel_zone_shear(
+            dc_in=14.48,
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=0.940,
+            db_in=23.73,
+            ag_in2=35.3,
+            vu_kips=250.0,
+            pr_kips=300.0,
+            consider_deformation=True,
+        )
+        self.assertTrue(res_deform["pass"])
+        self.assertEqual(res_deform["governing_equation"], "J10-11")
+        self.assertGreater(res_deform["phi_rn_kips"], res_pass["phi_rn_kips"])
+        self.assertLess(res_deform["dcr"], 1.0)
+
+        # High axial load reduction under Eq. J10-10 (Pr > 0.40 Pc) causing failure
+        res_high_p = verify_aisc_panel_zone_shear(
+            dc_in=14.48,
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=0.940,
+            db_in=23.73,
+            ag_in2=35.3,
+            vu_kips=200.0,
+            pr_kips=1000.0,
+            consider_deformation=False,
+        )
+        self.assertFalse(res_high_p["pass"])
+        self.assertEqual(res_high_p["governing_equation"], "J10-10")
+        self.assertTrue(res_high_p["doubler_required"])
+        self.assertGreater(res_high_p["dcr"], 1.0)
+        self.assertIsNotNone(res_high_p["min_doubler_thickness_in"])
+
+        # Resolving shear demand from beam moment Mu and column shear Vcol
+        res_moment = verify_aisc_panel_zone_shear(
+            dc_in=14.48,
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=0.940,
+            db_in=24.0,
+            ag_in2=35.3,
+            mu_beam_kip_ft=400.0,
+            v_col_kips=20.0,
+            pr_kips=200.0,
+        )
+        self.assertTrue(res_moment["pass"])
+        self.assertAlmostEqual(res_moment["v_demand_kips"], (400.0 * 12.0 / 24.0) - 20.0, places=1)
+
+        # Providing adequate doubler plate restoring capacity
+        res_doubler = verify_aisc_panel_zone_shear(
+            dc_in=14.48,
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=0.940,
+            db_in=23.73,
+            ag_in2=35.3,
+            vu_kips=350.0,
+            pr_kips=300.0,
+            doubler_plate_t_in=0.375,
+        )
+        self.assertTrue(res_doubler["pass"])
+        self.assertFalse(res_doubler["doubler_required"])
+        self.assertLess(res_doubler["dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_aisc_panel_zone_shear(
+            dc_in=float("nan"),
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=0.940,
+            db_in=23.73,
+            ag_in2=35.3,
+            vu_kips=200.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_panel_zone_shear(
+            dc_in=-14.0,
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=0.940,
+            db_in=23.73,
+            ag_in2=35.3,
+            vu_kips=200.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_material")
+
+        res_flange_err = verify_aisc_panel_zone_shear(
+            dc_in=10.0,
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=6.0,
+            db_in=23.73,
+            ag_in2=35.3,
+            vu_kips=200.0,
+        )
+        self.assertFalse(res_flange_err["pass"])
+        self.assertEqual(res_flange_err["reason"], "flanges_exceed_column_depth")
+
+        res_no_demand = verify_aisc_panel_zone_shear(
+            dc_in=14.48,
+            tw_in=0.590,
+            bcf_in=14.67,
+            tcf_in=0.940,
+            db_in=23.73,
+            ag_in2=35.3,
+            vu_kips=0.0,
+            mu_beam_kip_ft=0.0,
+        )
+        self.assertFalse(res_no_demand["pass"])
+        self.assertEqual(res_no_demand["reason"], "zero_shear_demand")
 
 
 if __name__ == "__main__":

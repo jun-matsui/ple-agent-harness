@@ -6548,3 +6548,114 @@ def verify_nec_feeder_tap_rules(
         "termination_ok": termination_ok,
         "enclosure_ok": enclosure_ok,
     }
+
+
+def verify_aisc_panel_zone_shear(
+    dc_in: float,
+    tw_in: float,
+    bcf_in: float,
+    tcf_in: float,
+    db_in: float,
+    ag_in2: float,
+    vu_kips: float = 0.0,
+    mu_beam_kip_ft: float = 0.0,
+    v_col_kips: float = 0.0,
+    pr_kips: float = 0.0,
+    fy_ksi: float = 50.0,
+    consider_deformation: bool = False,
+    doubler_plate_t_in: float = 0.0,
+    phi: float = 0.90,
+) -> Dict[str, Any]:
+    """AISC 360-16 Section J10.6 LRFD beam-column panel zone shear capacity and doubler plate check."""
+    scalars = [
+        dc_in,
+        tw_in,
+        bcf_in,
+        tcf_in,
+        db_in,
+        ag_in2,
+        vu_kips,
+        mu_beam_kip_ft,
+        v_col_kips,
+        pr_kips,
+        fy_ksi,
+        doubler_plate_t_in,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(dc_in, tw_in, bcf_in, tcf_in, db_in, ag_in2, fy_ksi, phi) <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if (
+        vu_kips < 0
+        or mu_beam_kip_ft < 0
+        or v_col_kips < 0
+        or pr_kips < 0
+        or doubler_plate_t_in < 0
+    ):
+        return {"pass": False, "reason": "negative_load_or_dimension"}
+    if 2.0 * tcf_in >= dc_in:
+        return {"pass": False, "reason": "flanges_exceed_column_depth"}
+
+    # Resolve panel zone shear demand force (Vu)
+    if vu_kips > 0.0:
+        v_demand_kips = vu_kips
+    elif mu_beam_kip_ft > 0.0:
+        v_demand_kips = max(0.0, (mu_beam_kip_ft * 12.0 / db_in) - v_col_kips)
+    else:
+        return {"pass": False, "reason": "zero_shear_demand"}
+
+    # Column compressive strength Pc = Py = Fy * Ag
+    pc_kips = fy_ksi * ag_in2
+    if pr_kips >= pc_kips:
+        return {"pass": False, "reason": "axial_load_exceeds_column_capacity"}
+
+    pr_ratio = pr_kips / pc_kips
+    t_eff = tw_in + doubler_plate_t_in
+
+    # AISC 360-16 Section J10.6 nominal shear strength Rn
+    if not consider_deformation:
+        # 1. When effect of panel-zone deformation on frame stability is not considered
+        if pr_ratio <= 0.40:
+            rn_kips = 0.60 * fy_ksi * dc_in * t_eff
+            gov_eq = "J10-9"
+        else:
+            rn_kips = 0.60 * fy_ksi * dc_in * t_eff * (1.4 - pr_ratio)
+            gov_eq = "J10-10"
+    else:
+        # 2. When effect of panel-zone deformation on frame stability is considered
+        flange_enhancement = (3.0 * bcf_in * (tcf_in**2)) / (db_in * dc_in * t_eff)
+        rn_base = 0.60 * fy_ksi * dc_in * t_eff * (1.0 + flange_enhancement)
+        if pr_ratio <= 0.75:
+            rn_kips = rn_base
+            gov_eq = "J10-11"
+        else:
+            rn_kips = rn_base * (1.9 - 1.2 * pr_ratio)
+            gov_eq = "J10-12"
+
+    phi_rn_kips = phi * rn_kips
+    dcr = v_demand_kips / phi_rn_kips if phi_rn_kips > 0 else float("inf")
+    passed = dcr <= 1.0
+    doubler_required = not passed
+
+    # Minimum doubler plate thickness to prevent local buckling (AISC J10.6 & F13.2)
+    clear_web_depth_in = dc_in - 2.0 * tcf_in
+    t_min_buckling_in = clear_web_depth_in / 50.0
+
+    req_total_t_in = t_eff * dcr if dcr > 1.0 else t_eff
+    min_doubler_thickness_in = max(req_total_t_in - tw_in, t_min_buckling_in) if doubler_required else 0.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_rn_kips": round(phi_rn_kips, 2),
+        "rn_kips": round(rn_kips, 2),
+        "v_demand_kips": round(v_demand_kips, 2),
+        "pc_kips": round(pc_kips, 2),
+        "pr_ratio": round(pr_ratio, 4),
+        "governing_equation": gov_eq,
+        "doubler_required": doubler_required,
+        "min_doubler_thickness_in": round(min_doubler_thickness_in, 3) if doubler_required else None,
+    }
