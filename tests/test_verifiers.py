@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_slip_critical_connection,
     verify_spangler_pipe_deflection,
     verify_nds_timber_column_compression,
     verify_ashrae15_machinery_room_safety,
@@ -8050,6 +8051,137 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_geometry_or_soil_property")
+
+
+    def test_aisc_slip_critical_connection(self) -> None:
+        from harness.verifiers import verify_aisc_slip_critical_connection
+
+        # Standard passing 4-bolt connection (3/4" A325, Class A faying surface, standard holes)
+        # Tb = 28.0 kips, Du = 1.13, mu = 0.30, hf = 1.0, hsc = 1.0, phi = 1.00
+        # Rn_single = 0.30 * 1.13 * 1.0 * 28.0 * 1 * 1.0 = 9.492 kips
+        # Phi_Rn = 1.00 * 4 * 9.492 = 37.968 kips
+        res_pass = verify_aisc_slip_critical_connection(
+            vu_kips=30.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            bolt_grade="A325",
+            faying_surface_class="Class_A",
+            hole_type="standard",
+            num_slip_planes=1,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["tb_kips"], 28.0)
+        self.assertEqual(res_pass["mu"], 0.30)
+        self.assertEqual(res_pass["h_sc"], 1.0)
+        self.assertEqual(res_pass["k_sc"], 1.0)
+        self.assertAlmostEqual(res_pass["rn_single_bolt_kips"], 9.49, places=2)
+        self.assertAlmostEqual(res_pass["phi_rn_kips"], 37.97, places=2)
+        self.assertAlmostEqual(res_pass["dcr"], 30.0 / 37.968, places=3)
+        self.assertFalse(res_pass["clamping_lost"])
+
+        # Class B faying surface (mu = 0.50) with A490 bolts and double shear
+        # Tb = 35.0 kips, Rn_single = 0.50 * 1.13 * 1.0 * 35.0 * 2 = 39.55 kips
+        res_class_b = verify_aisc_slip_critical_connection(
+            vu_kips=120.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            bolt_grade="A490",
+            faying_surface_class="Class_B",
+            num_slip_planes=2,
+        )
+        self.assertTrue(res_class_b["pass"])
+        self.assertEqual(res_class_b["mu"], 0.50)
+        self.assertAlmostEqual(res_class_b["phi_rn_kips"], 158.20, places=1)
+        self.assertLess(res_class_b["dcr"], 1.0)
+
+        # Combined shear and tension check (clamping force reduced by Tu)
+        # Total pretension = 1.13 * 28.0 * 4 = 126.56 kips; Tu = 40.0 kips
+        # k_sc = 1 - (40 / 126.56) = 0.6839
+        res_tension = verify_aisc_slip_critical_connection(
+            vu_kips=20.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            bolt_grade="A325",
+            tu_kips=40.0,
+        )
+        self.assertTrue(res_tension["pass"])
+        self.assertAlmostEqual(res_tension["k_sc"], 0.6839, places=3)
+        self.assertAlmostEqual(res_tension["phi_rn_kips"], 37.968 * 0.6839, places=1)
+
+        # Excessive tension overcoming pretension (Tu >= total pretension)
+        res_clamping_lost = verify_aisc_slip_critical_connection(
+            vu_kips=5.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            tu_kips=130.0,
+        )
+        self.assertFalse(res_clamping_lost["pass"])
+        self.assertTrue(res_clamping_lost["clamping_lost"])
+        self.assertEqual(res_clamping_lost["k_sc"], 0.0)
+
+        # Oversized holes reducing capacity and resistance factor
+        res_oversized = verify_aisc_slip_critical_connection(
+            vu_kips=30.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            hole_type="oversized",
+        )
+        self.assertFalse(res_oversized["pass"])
+        self.assertEqual(res_oversized["h_sc"], 0.85)
+        self.assertEqual(res_oversized["phi"], 0.85)
+        self.assertGreater(res_oversized["dcr"], 1.0)
+
+        # Shear overload failure (Vu > phi * Rn)
+        res_fail_load = verify_aisc_slip_critical_connection(
+            vu_kips=45.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+        )
+        self.assertFalse(res_fail_load["pass"])
+        self.assertGreater(res_fail_load["dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_aisc_slip_critical_connection(
+            vu_kips=float("nan"),
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_slip_critical_connection(
+            vu_kips=-10.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_inv_dia = verify_aisc_slip_critical_connection(
+            vu_kips=20.0,
+            num_bolts=4,
+            bolt_diameter_in=0.45,
+        )
+        self.assertFalse(res_inv_dia["pass"])
+        self.assertEqual(res_inv_dia["reason"], "invalid_bolt_diameter")
+
+        res_inv_grade = verify_aisc_slip_critical_connection(
+            vu_kips=20.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            bolt_grade="Grade_8",
+        )
+        self.assertFalse(res_inv_grade["pass"])
+        self.assertEqual(res_inv_grade["reason"], "invalid_bolt_grade")
+
+        res_inv_surface = verify_aisc_slip_critical_connection(
+            vu_kips=20.0,
+            num_bolts=4,
+            bolt_diameter_in=0.75,
+            faying_surface_class="Class_D",
+        )
+        self.assertFalse(res_inv_surface["pass"])
+        self.assertEqual(res_inv_surface["reason"], "invalid_faying_surface_class")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+{
+  "score": 92.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_slip_critical_connection",
+    "rationale": "Evaluates AISC 360-16 Section J3.8 high-strength bolted slip-critical connection shear capacity, including faying surface condition, hole geometry factors, filler factors, and combined tension clamping reduction.",
+    "model": "gemini-3.8-flash"
+  }
+}

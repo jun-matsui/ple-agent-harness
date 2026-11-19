@@ -8236,3 +8236,125 @@ def verify_spangler_pipe_deflection(
         "mean_diameter_in": round(d_mean, 2),
         "deflection_ok": deflection_ok,
     }
+
+
+def verify_aisc_slip_critical_connection(
+    vu_kips: float,
+    num_bolts: int,
+    bolt_diameter_in: float,
+    bolt_grade: str = "A325",
+    faying_surface_class: str = "Class_A",
+    hole_type: str = "standard",
+    num_slip_planes: int = 1,
+    tu_kips: float = 0.0,
+    filler_factor_hf: float = 1.0,
+    phi_override: float = 0.0,
+) -> Dict[str, Any]:
+    """AISC 360-16 Section J3.8 LRFD slip-critical connection capacity and combined tension check."""
+    scalars = [
+        vu_kips,
+        float(num_bolts),
+        bolt_diameter_in,
+        float(num_slip_planes),
+        tu_kips,
+        filler_factor_hf,
+        phi_override,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if vu_kips < 0 or tu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if num_bolts < 1:
+        return {"pass": False, "reason": "non_positive_bolt_count"}
+    if num_slip_planes not in (1, 2):
+        return {"pass": False, "reason": "invalid_slip_planes"}
+    if not (0.50 <= filler_factor_hf <= 1.0):
+        return {"pass": False, "reason": "invalid_filler_factor"}
+
+    # AISC 360-16 Table J3.1 Minimum bolt pretension Tb (kips)
+    tb_table: Dict[float, Dict[str, float]] = {
+        0.500: {"group_a": 12.0, "group_b": 15.0},
+        0.625: {"group_a": 19.0, "group_b": 24.0},
+        0.750: {"group_a": 28.0, "group_b": 35.0},
+        0.875: {"group_a": 39.0, "group_b": 49.0},
+        1.000: {"group_a": 51.0, "group_b": 64.0},
+        1.125: {"group_a": 56.0, "group_b": 80.0},
+        1.250: {"group_a": 71.0, "group_b": 102.0},
+        1.375: {"group_a": 85.0, "group_b": 121.0},
+        1.500: {"group_a": 103.0, "group_b": 148.0},
+    }
+
+    dia_key = round(bolt_diameter_in, 3)
+    if dia_key not in tb_table:
+        return {"pass": False, "reason": "invalid_bolt_diameter"}
+
+    grade_clean = bolt_grade.strip().lower().replace(" ", "_").replace("-", "_")
+    if grade_clean in ("a325", "f1852", "group_a"):
+        group_key = "group_a"
+    elif grade_clean in ("a490", "f2280", "group_b"):
+        group_key = "group_b"
+    else:
+        return {"pass": False, "reason": "invalid_bolt_grade"}
+
+    tb_single = tb_table[dia_key][group_key]
+
+    # AISC 360-16 Section J3.8 mean slip coefficient mu
+    faying_clean = faying_surface_class.strip().lower().replace(" ", "_").replace("-", "_")
+    if faying_clean in ("class_a", "a"):
+        mu = 0.30
+    elif faying_clean in ("class_b", "b"):
+        mu = 0.50
+    else:
+        return {"pass": False, "reason": "invalid_faying_surface_class"}
+
+    # AISC 360-16 Section J3.8 hole factors and resistance factor phi
+    htype_clean = hole_type.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_holes = {"standard", "oversized", "short_slot", "short_slotted", "long_slot", "long_slotted"}
+    if htype_clean not in valid_holes:
+        return {"pass": False, "reason": "invalid_hole_type"}
+
+    if htype_clean == "standard":
+        h_sc = 1.00
+        phi_code = 1.00
+    elif htype_clean in ("oversized", "short_slot", "short_slotted"):
+        h_sc = 0.85
+        phi_code = 0.85 if htype_clean == "oversized" else 1.00
+    else:  # long slot
+        h_sc = 0.70
+        phi_code = 0.70
+
+    phi = phi_override if phi_override > 0.0 else phi_code
+    if not (0.0 < phi <= 1.0):
+        return {"pass": False, "reason": "invalid_phi_factor"}
+
+    # Du = 1.13 ratio of mean installed bolt pretension to specified minimum pretension
+    d_u = 1.13
+
+    # AISC Eq. J3-5a tension reduction factor ksc for clamping force loss
+    total_pretension = d_u * tb_single * float(num_bolts)
+    if tu_kips >= total_pretension:
+        k_sc = 0.0
+    else:
+        k_sc = 1.0 - (tu_kips / total_pretension)
+
+    # AISC Eq. J3-4 nominal slip resistance per bolt
+    rn_single = mu * d_u * filler_factor_hf * tb_single * num_slip_planes * h_sc * k_sc
+    rn_total = rn_single * float(num_bolts)
+    phi_rn_total = phi * rn_total
+
+    dcr = vu_kips / phi_rn_total if phi_rn_total > 0 else float("inf")
+    passed = (dcr <= 1.0) and (k_sc > 0.0 or vu_kips == 0.0)
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_rn_kips": round(phi_rn_total, 2),
+        "rn_kips": round(rn_total, 2),
+        "rn_single_bolt_kips": round(rn_single, 2),
+        "tb_kips": round(tb_single, 1),
+        "mu": round(mu, 2),
+        "h_sc": round(h_sc, 2),
+        "k_sc": round(k_sc, 4),
+        "phi": round(phi, 2),
+        "clamping_lost": k_sc == 0.0,
+    }
