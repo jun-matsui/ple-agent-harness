@@ -6240,3 +6240,113 @@ def verify_ashrae_ahu_psychrometric_mixing(
         "sensible_ok": sensible_ok,
         "freeze_ok": freeze_ok,
     }
+
+
+def verify_aisc_plate_girder_shear(
+    vu_kips: float,
+    d_in: float,
+    tw_in: float,
+    h_web_in: float,
+    stiffener_spacing_a_in: float = 0.0,
+    fy_ksi: float = 50.0,
+    e_ksi: float = 29000.0,
+    use_tension_field_action: bool = False,
+    is_end_panel: bool = False,
+    phi: float = 0.90,
+) -> Dict[str, Any]:
+    """AISC 360-16 Section G2 LRFD plate girder web shear buckling, stiffener spacing, and Tension Field Action check."""
+    scalars = [
+        vu_kips,
+        d_in,
+        tw_in,
+        h_web_in,
+        stiffener_spacing_a_in,
+        fy_ksi,
+        e_ksi,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if vu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if min(d_in, tw_in, h_web_in, fy_ksi, e_ksi, phi) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if stiffener_spacing_a_in < 0:
+        return {"pass": False, "reason": "negative_stiffener_spacing"}
+    if h_web_in > d_in:
+        return {"pass": False, "reason": "web_depth_exceeds_total_depth"}
+
+    # Web area Aw = d * tw (AISC 360-16 Section G2.1)
+    aw_in2 = d_in * tw_in
+    h_over_tw = h_web_in / tw_in
+
+    is_stiffened = stiffener_spacing_a_in > 0.0
+    if is_stiffened:
+        a_over_h = stiffener_spacing_a_in / h_web_in
+        # AISC 360-16 Section G2.1 web shear plate buckling coefficient kv
+        if a_over_h <= 3.0:
+            kv = 5.0 + 5.0 / (a_over_h**2)
+        else:
+            kv = 5.34
+    else:
+        a_over_h = 0.0
+        kv = 5.34
+
+    # Slenderness thresholds per AISC Section G2.1
+    sqrt_term = math.sqrt((kv * e_ksi) / fy_ksi)
+    limit_yield = 1.10 * sqrt_term
+    limit_inelastic = 1.37 * sqrt_term
+
+    # Web shear strength coefficient Cv1 without tension field action
+    if h_over_tw <= limit_yield:
+        cv1 = 1.0
+        limit_state_base = "shear_yielding"
+    elif h_over_tw <= limit_inelastic:
+        cv1 = limit_yield / h_over_tw
+        limit_state_base = "inelastic_shear_buckling"
+    else:
+        cv1 = (1.51 * kv * e_ksi) / ((h_over_tw**2) * fy_ksi)
+        limit_state_base = "elastic_shear_buckling"
+
+    # Tension Field Action (TFA) check per AISC 360-16 Section G2.2
+    cv2 = None
+    tfa_applied = False
+    if use_tension_field_action:
+        if is_end_panel:
+            return {"pass": False, "reason": "tension_field_action_not_permitted_on_end_panel"}
+        if not is_stiffened:
+            return {"pass": False, "reason": "tension_field_action_requires_stiffeners"}
+        if a_over_h > 3.0:
+            return {"pass": False, "reason": "aspect_ratio_exceeds_tfa_limit"}
+
+        if h_over_tw <= limit_yield:
+            vn_kips = 0.60 * fy_ksi * aw_in2
+            limit_state = "shear_yielding"
+        else:
+            cv2 = limit_yield / h_over_tw
+            denom_tfa = 1.15 * math.sqrt(1.0 + (a_over_h**2))
+            tfa_factor = cv2 + (1.0 - cv2) / denom_tfa
+            vn_kips = 0.60 * fy_ksi * aw_in2 * tfa_factor
+            limit_state = "tension_field_action"
+            tfa_applied = True
+    else:
+        vn_kips = 0.60 * fy_ksi * aw_in2 * cv1
+        limit_state = limit_state_base
+
+    phi_vn_kips = phi * vn_kips
+    dcr = vu_kips / phi_vn_kips if phi_vn_kips > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_vn_kips": round(phi_vn_kips, 2),
+        "vn_kips": round(vn_kips, 2),
+        "cv1": round(cv1, 4),
+        "cv2": round(cv2, 4) if cv2 is not None else None,
+        "kv": round(kv, 4),
+        "h_over_tw": round(h_over_tw, 2),
+        "governing_limit_state": limit_state,
+        "is_stiffened": is_stiffened,
+        "tfa_applied": tfa_applied,
+    }

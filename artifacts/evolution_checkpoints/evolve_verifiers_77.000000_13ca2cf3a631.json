@@ -1,0 +1,9 @@
+{
+  "score": 77.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_plate_girder_shear",
+    "rationale": "Implements AISC 360-16 Chapter G2 LRFD web shear strength for I-shaped members and plate girders, accounting for elastic/inelastic shear buckling, transverse stiffener spacing, and post-buckling Tension Field Action (TFA).",
+    "model": "gemini-3.8-flash"
+  }
+}

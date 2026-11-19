@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_plate_girder_shear,
     verify_ashrae_ahu_psychrometric_mixing,
     verify_aci_spread_footing,
     verify_nfpa20_fire_pump_performance,
@@ -6121,6 +6122,121 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_airflow")
+
+
+    def test_aisc_plate_girder_shear(self) -> None:
+        from harness.verifiers import verify_aisc_plate_girder_shear
+
+        # Unstiffened girder check (elastic shear buckling governing)
+        res_unstiff = verify_aisc_plate_girder_shear(
+            vu_kips=100.0,
+            d_in=60.0,
+            tw_in=0.375,
+            h_web_in=58.0,
+            fy_ksi=50.0,
+        )
+        self.assertTrue(res_unstiff["pass"])
+        self.assertEqual(res_unstiff["governing_limit_state"], "elastic_shear_buckling")
+        self.assertFalse(res_unstiff["is_stiffened"])
+        self.assertFalse(res_unstiff["tfa_applied"])
+        self.assertEqual(res_unstiff["kv"], 5.34)
+        self.assertAlmostEqual(res_unstiff["phi_vn_kips"], 118.77, places=1)
+        self.assertLess(res_unstiff["dcr"], 1.0)
+
+        # Stiffened girder without TFA (a = 72 in)
+        res_stiff = verify_aisc_plate_girder_shear(
+            vu_kips=150.0,
+            d_in=60.0,
+            tw_in=0.375,
+            h_web_in=58.0,
+            stiffener_spacing_a_in=72.0,
+            fy_ksi=50.0,
+        )
+        self.assertTrue(res_stiff["pass"])
+        self.assertTrue(res_stiff["is_stiffened"])
+        self.assertAlmostEqual(res_stiff["kv"], 8.245, places=2)
+        self.assertAlmostEqual(res_stiff["phi_vn_kips"], 183.33, places=1)
+
+        # Tension Field Action (TFA) on interior panel significantly boosting shear strength
+        res_tfa = verify_aisc_plate_girder_shear(
+            vu_kips=400.0,
+            d_in=60.0,
+            tw_in=0.375,
+            h_web_in=58.0,
+            stiffener_spacing_a_in=72.0,
+            use_tension_field_action=True,
+            is_end_panel=False,
+            fy_ksi=50.0,
+        )
+        self.assertTrue(res_tfa["pass"])
+        self.assertTrue(res_tfa["tfa_applied"])
+        self.assertEqual(res_tfa["governing_limit_state"], "tension_field_action")
+        self.assertAlmostEqual(res_tfa["phi_vn_kips"], 467.18, places=1)
+        self.assertLess(res_tfa["dcr"], 1.0)
+
+        # End panel attempting to use TFA rejected by code
+        res_end_tfa = verify_aisc_plate_girder_shear(
+            vu_kips=200.0,
+            d_in=60.0,
+            tw_in=0.375,
+            h_web_in=58.0,
+            stiffener_spacing_a_in=72.0,
+            use_tension_field_action=True,
+            is_end_panel=True,
+        )
+        self.assertFalse(res_end_tfa["pass"])
+        self.assertEqual(res_end_tfa["reason"], "tension_field_action_not_permitted_on_end_panel")
+
+        # Shear overload failure
+        res_fail = verify_aisc_plate_girder_shear(
+            vu_kips=250.0,
+            d_in=60.0,
+            tw_in=0.375,
+            h_web_in=58.0,
+            stiffener_spacing_a_in=72.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Stocky web governed by shear yielding
+        res_stocky = verify_aisc_plate_girder_shear(
+            vu_kips=200.0,
+            d_in=30.0,
+            tw_in=0.625,
+            h_web_in=28.0,
+            fy_ksi=50.0,
+        )
+        self.assertTrue(res_stocky["pass"])
+        self.assertEqual(res_stocky["governing_limit_state"], "shear_yielding")
+        self.assertEqual(res_stocky["cv1"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_aisc_plate_girder_shear(
+            vu_kips=float("nan"),
+            d_in=60.0,
+            tw_in=0.375,
+            h_web_in=58.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_plate_girder_shear(
+            vu_kips=-50.0,
+            d_in=60.0,
+            tw_in=0.375,
+            h_web_in=58.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_depth_err = verify_aisc_plate_girder_shear(
+            vu_kips=50.0,
+            d_in=50.0,
+            tw_in=0.375,
+            h_web_in=55.0,
+        )
+        self.assertFalse(res_depth_err["pass"])
+        self.assertEqual(res_depth_err["reason"], "web_depth_exceeds_total_depth")
 
 
 if __name__ == "__main__":
