@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_composite_beam_flexure,
     verify_nds_timber_beam_flexure_and_shear,
     verify_aisc_panel_zone_shear,
     verify_nec_feeder_tap_rules,
@@ -6756,6 +6757,174 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg_geom["pass"])
         self.assertEqual(res_neg_geom["reason"], "non_positive_geometry_or_material")
+
+
+    def test_aisc_composite_beam_flexure(self) -> None:
+        from harness.verifiers import verify_aisc_composite_beam_flexure
+
+        # Standard passing fully composite W18x35 beam with PNA in concrete slab
+        # W18x35: d=17.7 in, tw=0.300 in, bf=6.00 in, tf=0.425 in, Ag=10.3 in2
+        # Span = 30 ft, Spacing = 8 ft -> b_eff = min(360/4, 96) = 90 in
+        # Slab: 4.5 in total, 2.0 in rib -> tc = 2.5 in. fc' = 4.0 ksi, Fy = 50 ksi
+        res_pass_slab = verify_aisc_composite_beam_flexure(
+            mu_kip_ft=380.0,
+            span_ft=30.0,
+            beam_spacing_ft=8.0,
+            d_beam_in=17.7,
+            tw_in=0.300,
+            bf_in=6.00,
+            tf_in=0.425,
+            ag_in2=10.3,
+            slab_thickness_total_in=4.5,
+            deck_rib_height_in=2.0,
+            fc_psi=4000.0,
+            num_shear_studs=32,
+            stud_capacity_qn_kips=17.2,
+        )
+        self.assertTrue(res_pass_slab["pass"])
+        self.assertEqual(res_pass_slab["pna_location"], "in_slab")
+        self.assertEqual(res_pass_slab["effective_slab_width_in"], 90.0)
+        self.assertEqual(res_pass_slab["composite_pct"], 100.0)
+        self.assertAlmostEqual(res_pass_slab["t_steel_kips"], 515.0, places=1)
+        self.assertAlmostEqual(res_pass_slab["c_kips"], 515.0, places=1)
+        self.assertLess(res_pass_slab["dcr"], 1.0)
+
+        # Partially composite beam with PNA in steel flange
+        res_flange = verify_aisc_composite_beam_flexure(
+            mu_kip_ft=320.0,
+            span_ft=30.0,
+            beam_spacing_ft=8.0,
+            d_beam_in=17.7,
+            tw_in=0.300,
+            bf_in=6.00,
+            tf_in=0.425,
+            ag_in2=10.3,
+            slab_thickness_total_in=4.5,
+            deck_rib_height_in=2.0,
+            fc_psi=4000.0,
+            num_shear_studs=20,
+            stud_capacity_qn_kips=17.2,
+        )
+        self.assertTrue(res_flange["pass"])
+        self.assertEqual(res_flange["pna_location"], "in_flange")
+        self.assertAlmostEqual(res_flange["c_kips"], 344.0, places=1)
+        self.assertAlmostEqual(res_flange["composite_pct"], (344.0 / 515.0) * 100.0, places=1)
+        self.assertLess(res_flange["phi_mn_kip_ft"], res_pass_slab["phi_mn_kip_ft"])
+
+        # Partially composite beam with PNA in steel web
+        res_web = verify_aisc_composite_beam_flexure(
+            mu_kip_ft=250.0,
+            span_ft=30.0,
+            beam_spacing_ft=8.0,
+            d_beam_in=17.7,
+            tw_in=0.300,
+            bf_in=6.00,
+            tf_in=0.425,
+            ag_in2=10.3,
+            slab_thickness_total_in=4.5,
+            deck_rib_height_in=2.0,
+            fc_psi=4000.0,
+            num_shear_studs=10,
+            stud_capacity_qn_kips=17.2,
+        )
+        self.assertTrue(res_web["pass"])
+        self.assertEqual(res_web["pna_location"], "in_web")
+        self.assertAlmostEqual(res_web["c_kips"], 172.0, places=1)
+        self.assertLess(res_web["dcr"], 1.0)
+
+        # Insufficient shear studs failing minimum 25% composite action (AISC I3.2d.1)
+        res_low_studs = verify_aisc_composite_beam_flexure(
+            mu_kip_ft=200.0,
+            span_ft=30.0,
+            beam_spacing_ft=8.0,
+            d_beam_in=17.7,
+            tw_in=0.300,
+            bf_in=6.00,
+            tf_in=0.425,
+            ag_in2=10.3,
+            slab_thickness_total_in=4.5,
+            deck_rib_height_in=2.0,
+            fc_psi=4000.0,
+            num_shear_studs=6,
+            stud_capacity_qn_kips=17.2,
+        )
+        self.assertFalse(res_low_studs["pass"])
+        self.assertEqual(res_low_studs["reason"], "insufficient_composite_action")
+        self.assertLess(res_low_studs["composite_pct"], 25.0)
+
+        # Factored moment exceeding composite capacity failure (DCR > 1.0)
+        res_fail_mu = verify_aisc_composite_beam_flexure(
+            mu_kip_ft=600.0,
+            span_ft=30.0,
+            beam_spacing_ft=8.0,
+            d_beam_in=17.7,
+            tw_in=0.300,
+            bf_in=6.00,
+            tf_in=0.425,
+            ag_in2=10.3,
+            slab_thickness_total_in=4.5,
+            deck_rib_height_in=2.0,
+            fc_psi=4000.0,
+            num_shear_studs=32,
+            stud_capacity_qn_kips=17.2,
+        )
+        self.assertFalse(res_fail_mu["pass"])
+        self.assertGreater(res_fail_mu["dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_aisc_composite_beam_flexure(
+            mu_kip_ft=float("nan"),
+            span_ft=30.0,
+            beam_spacing_ft=8.0,
+            d_beam_in=17.7,
+            tw_in=0.300,
+            bf_in=6.00,
+            tf_in=0.425,
+            ag_in2=10.3,
+            slab_thickness_total_in=4.5,
+            deck_rib_height_in=2.0,
+            fc_psi=4000.0,
+            num_shear_studs=30,
+            stud_capacity_qn_kips=17.2,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_composite_beam_flexure(
+            mu_kip_ft=-50.0,
+            span_ft=30.0,
+            beam_spacing_ft=8.0,
+            d_beam_in=17.7,
+            tw_in=0.300,
+            bf_in=6.00,
+            tf_in=0.425,
+            ag_in2=10.3,
+            slab_thickness_total_in=4.5,
+            deck_rib_height_in=2.0,
+            fc_psi=4000.0,
+            num_shear_studs=30,
+            stud_capacity_qn_kips=17.2,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_deck_err = verify_aisc_composite_beam_flexure(
+            mu_kip_ft=300.0,
+            span_ft=30.0,
+            beam_spacing_ft=8.0,
+            d_beam_in=17.7,
+            tw_in=0.300,
+            bf_in=6.00,
+            tf_in=0.425,
+            ag_in2=10.3,
+            slab_thickness_total_in=3.0,
+            deck_rib_height_in=3.0,
+            fc_psi=4000.0,
+            num_shear_studs=30,
+            stud_capacity_qn_kips=17.2,
+        )
+        self.assertFalse(res_deck_err["pass"])
+        self.assertEqual(res_deck_err["reason"], "deck_height_exceeds_total_slab_thickness")
 
 
 if __name__ == "__main__":

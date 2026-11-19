@@ -1,0 +1,9 @@
+{
+  "score": 82.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_composite_beam_flexure",
+    "rationale": "AISC 360-16 Chapter I composite steel-concrete beam flexural design and shear stud verification is a core requirement across structural engineering exams, evaluating effective slab width, degree of composite action, plastic neutral axis location (slab, flange, or web), and LRFD moment capacity.",
+    "model": "gemini-3.8-flash"
+  }
+}

@@ -6815,3 +6815,157 @@ def verify_nds_timber_beam_flexure_and_shear(
         "shear_ok": shear_ok,
         "defl_ok": defl_ok,
     }
+
+
+def verify_aisc_composite_beam_flexure(
+    mu_kip_ft: float,
+    span_ft: float,
+    beam_spacing_ft: float,
+    d_beam_in: float,
+    tw_in: float,
+    bf_in: float,
+    tf_in: float,
+    ag_in2: float,
+    slab_thickness_total_in: float,
+    deck_rib_height_in: float,
+    fc_psi: float,
+    num_shear_studs: int,
+    stud_capacity_qn_kips: float,
+    fy_ksi: float = 50.0,
+    is_edge_beam: bool = False,
+    effective_slab_width_override_in: float = 0.0,
+    min_composite_pct: float = 25.0,
+    phi: float = 0.90,
+) -> Dict[str, Any]:
+    """AISC 360-16 Chapter I LRFD composite steel beam flexural capacity and shear stud check."""
+    scalars = [
+        mu_kip_ft,
+        span_ft,
+        beam_spacing_ft,
+        d_beam_in,
+        tw_in,
+        bf_in,
+        tf_in,
+        ag_in2,
+        slab_thickness_total_in,
+        deck_rib_height_in,
+        fc_psi,
+        float(num_shear_studs),
+        stud_capacity_qn_kips,
+        fy_ksi,
+        effective_slab_width_override_in,
+        min_composite_pct,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if mu_kip_ft < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(
+            span_ft,
+            beam_spacing_ft,
+            d_beam_in,
+            tw_in,
+            bf_in,
+            tf_in,
+            ag_in2,
+            slab_thickness_total_in,
+            fc_psi,
+            stud_capacity_qn_kips,
+            fy_ksi,
+            phi,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if deck_rib_height_in < 0 or num_shear_studs < 0 or min_composite_pct < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+    if deck_rib_height_in >= slab_thickness_total_in:
+        return {"pass": False, "reason": "deck_height_exceeds_total_slab_thickness"}
+    if 2.0 * tf_in >= d_beam_in:
+        return {"pass": False, "reason": "flanges_exceed_beam_depth"}
+
+    # AISC 360-16 Section I3.1a effective slab width (b_eff)
+    if effective_slab_width_override_in > 0.0:
+        b_eff = effective_slab_width_override_in
+    elif is_edge_beam:
+        b_eff = min((span_ft * 12.0) / 8.0 + (beam_spacing_ft * 12.0) / 2.0, (span_ft * 12.0) / 4.0)
+    else:
+        b_eff = min(span_ft * 12.0 / 4.0, beam_spacing_ft * 12.0)
+
+    # Concrete thickness above steel deck ribs
+    t_c = slab_thickness_total_in - deck_rib_height_in
+    fc_ksi = fc_psi / 1000.0
+
+    # Component capacities for plastic stress distribution
+    c_conc_kips = 0.85 * fc_ksi * b_eff * t_c
+    t_steel_kips = fy_ksi * ag_in2
+    v_studs_kips = num_shear_studs * stud_capacity_qn_kips
+
+    # Compressive force transferred across composite interface (C)
+    c_max_avail = min(c_conc_kips, t_steel_kips)
+    c_kips = min(c_max_avail, v_studs_kips)
+
+    # Degree of composite action check (AISC I3.2d.1 requires min 25%)
+    composite_ratio = c_kips / c_max_avail if c_max_avail > 0 else 0.0
+    composite_pct = composite_ratio * 100.0
+    if composite_pct < min_composite_pct:
+        return {
+            "pass": False,
+            "reason": "insufficient_composite_action",
+            "composite_pct": round(composite_pct, 2),
+            "min_composite_pct": round(min_composite_pct, 2),
+        }
+
+    # Concrete stress block depth (a) in slab above ribs
+    a_in = c_kips / (0.85 * fc_ksi * b_eff)
+
+    # Distance from top of steel flange to concrete compression centroid
+    y_conc_in = deck_rib_height_in + t_c - (a_in / 2.0)
+
+    # Steel internal force adjustment for plastic equilibrium: C + C_s = T_s
+    c_s_kips = max(0.0, (t_steel_kips - c_kips) / 2.0)
+    p_fy_kips = fy_ksi * bf_in * tf_in
+
+    if c_s_kips == 0.0:
+        # PNA lies in the concrete slab
+        pna_loc = "in_slab"
+        mn_steel_kip_in = t_steel_kips * (d_beam_in / 2.0)
+    elif c_s_kips <= p_fy_kips:
+        # PNA lies in the steel top flange
+        pna_loc = "in_flange"
+        y_f_in = c_s_kips / (fy_ksi * bf_in)
+        mn_steel_kip_in = t_steel_kips * (d_beam_in / 2.0) - (2.0 * c_s_kips * (y_f_in / 2.0))
+    else:
+        # PNA lies in the steel web
+        pna_loc = "in_web"
+        c_web_kips = c_s_kips - p_fy_kips
+        y_w_in = c_web_kips / (fy_ksi * tw_in)
+        mn_steel_kip_in = (
+            t_steel_kips * (d_beam_in / 2.0)
+            - (2.0 * p_fy_kips * (tf_in / 2.0))
+            - (2.0 * c_web_kips * (tf_in + y_w_in / 2.0))
+        )
+
+    # Nominal flexural strength: moments taken about top of steel beam
+    mn_kip_in = (c_kips * y_conc_in) + mn_steel_kip_in
+    mn_kip_ft = mn_kip_in / 12.0
+    phi_mn_kip_ft = phi * mn_kip_ft
+
+    dcr = mu_kip_ft / phi_mn_kip_ft if phi_mn_kip_ft > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_mn_kip_ft": round(phi_mn_kip_ft, 2),
+        "mn_kip_ft": round(mn_kip_ft, 2),
+        "pna_location": pna_loc,
+        "composite_pct": round(composite_pct, 2),
+        "c_kips": round(c_kips, 2),
+        "c_conc_kips": round(c_conc_kips, 2),
+        "t_steel_kips": round(t_steel_kips, 2),
+        "effective_slab_width_in": round(b_eff, 2),
+        "a_in": round(a_in, 3),
+    }
