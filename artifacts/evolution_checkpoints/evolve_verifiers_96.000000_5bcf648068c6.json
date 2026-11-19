@@ -1,0 +1,9 @@
+{
+  "score": 96.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_hcm_freeway_level_of_service",
+    "rationale": "Implements the Highway Capacity Manual (HCM 6th/7th Edition) basic freeway segment operational analysis to determine passenger-car equivalent flow rate, adjusted free-flow speed, density, and Level of Service (LOS A-F). Fills a critical gap in civil/transportation engineering code gates on PE and PLE exams.",
+    "model": "gemini-3.8-flash"
+  }
+}

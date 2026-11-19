@@ -8732,3 +8732,170 @@ def verify_nfpa54_fuel_gas_pipe_sizing(
         "capacity_ok": flow_ok,
         "velocity_ok": vel_ok,
     }
+
+
+def verify_hcm_freeway_level_of_service(
+    hourly_volume_vph: float,
+    peak_hour_factor: float,
+    num_lanes: int,
+    heavy_vehicle_pct: float,
+    terrain_type: str = "level",
+    base_free_flow_speed_mph: float = 70.0,
+    lane_width_ft: float = 12.0,
+    right_shoulder_lateral_clearance_ft: float = 6.0,
+    total_ramp_density_per_mi: float = 0.0,
+    target_los: str = "D",
+    driver_population_factor: float = 1.0,
+) -> Dict[str, Any]:
+    """HCM 6th/7th Edition Chapter 12 basic freeway segment capacity, speed, density, and Level of Service gate."""
+    scalars = [
+        hourly_volume_vph,
+        peak_hour_factor,
+        float(num_lanes),
+        heavy_vehicle_pct,
+        base_free_flow_speed_mph,
+        lane_width_ft,
+        right_shoulder_lateral_clearance_ft,
+        total_ramp_density_per_mi,
+        driver_population_factor,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if hourly_volume_vph < 0:
+        return {"pass": False, "reason": "negative_volume_input"}
+    if (
+        min(
+            peak_hour_factor,
+            base_free_flow_speed_mph,
+            lane_width_ft,
+            driver_population_factor,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_speed_geometry_or_factor"}
+    if peak_hour_factor > 1.0:
+        return {"pass": False, "reason": "phf_exceeds_unity"}
+    if num_lanes < 1:
+        return {"pass": False, "reason": "invalid_lane_count"}
+    if not (0.0 <= heavy_vehicle_pct <= 100.0):
+        return {"pass": False, "reason": "invalid_heavy_vehicle_percentage"}
+    if right_shoulder_lateral_clearance_ft < 0 or total_ramp_density_per_mi < 0:
+        return {"pass": False, "reason": "negative_geometry_input"}
+    if not (0.50 <= driver_population_factor <= 1.0):
+        return {"pass": False, "reason": "invalid_driver_population_factor"}
+
+    terr_clean = terrain_type.strip().lower()
+    et_table: Dict[str, float] = {"level": 2.0, "rolling": 3.0, "mountainous": 4.5}
+    if terr_clean not in et_table:
+        return {"pass": False, "reason": "invalid_terrain_type"}
+    e_t = et_table[terr_clean]
+
+    target_clean = target_los.strip().upper()
+    los_order: Dict[str, int] = {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6}
+    density_limits: Dict[str, float] = {
+        "A": 11.0,
+        "B": 18.0,
+        "C": 26.0,
+        "D": 35.0,
+        "E": 45.0,
+    }
+    if target_clean not in los_order or target_clean == "F":
+        return {"pass": False, "reason": "invalid_target_los"}
+
+    # 1. Heavy vehicle adjustment factor f_HV (HCM Eq. 12-10)
+    p_t = heavy_vehicle_pct / 100.0
+    f_hv = 1.0 / (1.0 + p_t * (e_t - 1.0))
+
+    # 2. Demand flow rate in passenger cars per hour per lane v_p (HCM Eq. 12-9)
+    denom_vp = peak_hour_factor * float(num_lanes) * f_hv * driver_population_factor
+    v_p = hourly_volume_vph / denom_vp if denom_vp > 0 else float("inf")
+
+    # 3. Free-flow speed adjustments (HCM Eq. 12-1 & 12-2)
+    # Lane width reduction f_LW
+    if lane_width_ft >= 12.0:
+        f_lw = 0.0
+    elif lane_width_ft >= 11.0:
+        f_lw = 1.9
+    elif lane_width_ft >= 10.0:
+        f_lw = 6.6
+    else:
+        f_lw = 10.0
+
+    # Right lateral clearance reduction f_LC (HCM Table 12-8)
+    tlc = min(right_shoulder_lateral_clearance_ft, 6.0)
+    if num_lanes == 1:
+        lane_factor = 0.8
+    elif num_lanes == 2:
+        lane_factor = 0.6
+    elif num_lanes == 3:
+        lane_factor = 0.4
+    else:
+        lane_factor = 0.2
+    f_lc = lane_factor * (6.0 - tlc)
+
+    # Total ramp density reduction f_TRD (HCM Eq. 12-5)
+    f_trd = 3.22 * (total_ramp_density_per_mi**0.84) if total_ramp_density_per_mi > 0 else 0.0
+
+    # Estimated Free-Flow Speed (clamped between 55 and 75 mph)
+    ffs_calc = base_free_flow_speed_mph - f_lw - f_lc - f_trd
+    ffs = max(55.0, min(ffs_calc, 75.0))
+
+    # 4. Freeway segment capacity (HCM Exhibit 12-6)
+    if ffs >= 70.0:
+        capacity = 2400.0
+    elif ffs <= 55.0:
+        capacity = 2250.0
+    else:
+        capacity = 2250.0 + 10.0 * (ffs - 55.0)
+
+    # 5. Average travel speed S (mph) and breakpoint BP (HCM Exhibit 12-6)
+    bp = 1000.0 + 40.0 * (75.0 - ffs)
+    if v_p <= bp:
+        speed_mph = ffs
+    elif v_p <= capacity:
+        power_ratio = ((v_p - bp) / (capacity - bp)) ** 1.31
+        speed_mph = ffs - (ffs - (capacity / 45.0)) * power_ratio
+    else:
+        speed_mph = capacity / 45.0
+
+    # 6. Density D (passenger cars per mile per lane)
+    density = v_p / speed_mph if speed_mph > 0 else float("inf")
+
+    # 7. Level of Service (LOS) determination (HCM Exhibit 12-7)
+    if v_p > capacity or density > 45.0:
+        los = "F"
+    elif density <= 11.0:
+        los = "A"
+    elif density <= 18.0:
+        los = "B"
+    elif density <= 26.0:
+        los = "C"
+    elif density <= 35.0:
+        los = "D"
+    else:
+        los = "E"
+
+    # 8. Capacity and Target LOS compliance check
+    los_ok = los_order[los] <= los_order[target_clean]
+    capacity_ok = v_p <= capacity
+
+    target_density_limit = density_limits[target_clean]
+    density_dcr = density / target_density_limit if target_density_limit > 0 else float("inf")
+    flow_dcr = v_p / capacity if capacity > 0 else float("inf")
+    gov_dcr = max(density_dcr, flow_dcr)
+
+    passed = los_ok and capacity_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "los": los,
+        "target_los": target_clean,
+        "density_pcpmpl": round(density, 2),
+        "speed_mph": round(speed_mph, 2),
+        "v_p_pcphpl": round(v_p, 1),
+        "capacity_pcphpl": round(capacity, 1),
+        "ffs_mph": round(ffs, 2),
+        "f_hv": round(f_hv, 4),
+        "capacity_ok": capacity_ok,
+        "los_ok": los_ok,
+    }

@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_hcm_freeway_level_of_service,
     verify_nfpa54_fuel_gas_pipe_sizing,
     verify_nec_multimotor_feeder_sizing,
     verify_asce7_components_and_cladding_wind,
@@ -8457,6 +8458,118 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_gas["pass"])
         self.assertEqual(res_inv_gas["reason"], "invalid_gas_type")
+
+
+    def test_hcm_freeway_level_of_service(self) -> None:
+        from harness.verifiers import verify_hcm_freeway_level_of_service
+
+        # Standard passing urban basic freeway segment under moderate peak flow
+        # 3 lanes, V = 4200 vph, PHF = 0.95, 5% trucks in level terrain (Et=2.0 -> f_hv=0.9524)
+        # vp = 4200 / (0.95 * 3 * 0.9524) = 1547.4 pc/h/ln
+        # FFS = 70.0 mph, capacity = 2400 pc/h/ln, BP = 1200 pc/h/ln
+        # Speed = 66.70 mph, Density = 23.20 pc/mi/ln -> LOS C (meets target LOS D)
+        res_pass = verify_hcm_freeway_level_of_service(
+            hourly_volume_vph=4200.0,
+            peak_hour_factor=0.95,
+            num_lanes=3,
+            heavy_vehicle_pct=5.0,
+            terrain_type="level",
+            base_free_flow_speed_mph=70.0,
+            target_los="D",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["los"], "C")
+        self.assertEqual(res_pass["target_los"], "D")
+        self.assertAlmostEqual(res_pass["v_p_pcphpl"], 1547.4, places=1)
+        self.assertAlmostEqual(res_pass["capacity_pcphpl"], 2400.0, places=1)
+        self.assertAlmostEqual(res_pass["speed_mph"], 66.70, places=1)
+        self.assertAlmostEqual(res_pass["density_pcpmpl"], 23.20, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 23.20 / 35.0, places=3)
+        self.assertTrue(res_pass["capacity_ok"])
+        self.assertTrue(res_pass["los_ok"])
+
+        # Heavy volume exceeding freeway capacity resulting in breakdown (LOS F failure)
+        res_overload = verify_hcm_freeway_level_of_service(
+            hourly_volume_vph=7500.0,
+            peak_hour_factor=0.95,
+            num_lanes=3,
+            heavy_vehicle_pct=5.0,
+            terrain_type="level",
+            target_los="D",
+        )
+        self.assertFalse(res_overload["pass"])
+        self.assertEqual(res_overload["los"], "F")
+        self.assertFalse(res_overload["capacity_ok"])
+        self.assertFalse(res_overload["los_ok"])
+        self.assertGreater(res_overload["dcr"], 1.0)
+
+        # Reduced shoulder clearance, narrow lanes, and rolling terrain lowering FFS and failing LOS B
+        res_los_fail = verify_hcm_freeway_level_of_service(
+            hourly_volume_vph=3000.0,
+            peak_hour_factor=0.90,
+            num_lanes=2,
+            heavy_vehicle_pct=10.0,
+            terrain_type="rolling",
+            base_free_flow_speed_mph=65.0,
+            lane_width_ft=11.0,
+            right_shoulder_lateral_clearance_ft=2.0,
+            target_los="B",
+        )
+        self.assertFalse(res_los_fail["pass"])
+        self.assertIn(res_los_fail["los"], ["D", "E"])
+        self.assertFalse(res_los_fail["los_ok"])
+
+        # Input error: Peak hour factor exceeding unity
+        res_phf_err = verify_hcm_freeway_level_of_service(
+            hourly_volume_vph=2000.0,
+            peak_hour_factor=1.10,
+            num_lanes=2,
+            heavy_vehicle_pct=5.0,
+        )
+        self.assertFalse(res_phf_err["pass"])
+        self.assertEqual(res_phf_err["reason"], "phf_exceeds_unity")
+
+        # Input error: Negative volume
+        res_neg = verify_hcm_freeway_level_of_service(
+            hourly_volume_vph=-1000.0,
+            peak_hour_factor=0.92,
+            num_lanes=2,
+            heavy_vehicle_pct=5.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_volume_input")
+
+        # Input error: Invalid terrain
+        res_terr = verify_hcm_freeway_level_of_service(
+            hourly_volume_vph=2000.0,
+            peak_hour_factor=0.92,
+            num_lanes=2,
+            heavy_vehicle_pct=5.0,
+            terrain_type="swamp",
+        )
+        self.assertFalse(res_terr["pass"])
+        self.assertEqual(res_terr["reason"], "invalid_terrain_type")
+
+        # Input error: Invalid target LOS
+        res_los_inv = verify_hcm_freeway_level_of_service(
+            hourly_volume_vph=2000.0,
+            peak_hour_factor=0.92,
+            num_lanes=2,
+            heavy_vehicle_pct=5.0,
+            target_los="Z",
+        )
+        self.assertFalse(res_los_inv["pass"])
+        self.assertEqual(res_los_inv["reason"], "invalid_target_los")
+
+        # Input error: NaN input
+        res_nan = verify_hcm_freeway_level_of_service(
+            hourly_volume_vph=float("nan"),
+            peak_hour_factor=0.92,
+            num_lanes=2,
+            heavy_vehicle_pct=5.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
 
 
 if __name__ == "__main__":
