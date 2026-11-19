@@ -5613,3 +5613,147 @@ def verify_nec_transformer_overcurrent_protection(
         "primary_ok": prim_ok,
         "secondary_ok": sec_ok,
     }
+
+
+def verify_ite_signal_clearance_intervals(
+    approach_speed_mph: float,
+    intersection_width_ft: float,
+    grade_pct: float = 0.0,
+    provided_yellow_s: float = 0.0,
+    provided_red_s: float = 0.0,
+    reaction_time_s: float = 1.0,
+    deceleration_rate_fps2: float = 10.0,
+    vehicle_length_ft: float = 20.0,
+    min_yellow_s: float = 3.0,
+    max_yellow_s: float = 6.0,
+    min_red_s: float = 1.0,
+    cap_yellow_at_max: bool = True,
+    pedestrian_crossing_distance_ft: float = 0.0,
+    pedestrian_walking_speed_fps: float = 3.5,
+    provided_ped_clearance_s: float = 0.0,
+    g_fps2: float = 32.174,
+) -> Dict[str, Any]:
+    """ITE 2020 / MUTCD Section 4D.26 yellow change, all-red clearance, and pedestrian interval gate."""
+    scalars = [
+        approach_speed_mph,
+        intersection_width_ft,
+        grade_pct,
+        provided_yellow_s,
+        provided_red_s,
+        reaction_time_s,
+        deceleration_rate_fps2,
+        vehicle_length_ft,
+        min_yellow_s,
+        max_yellow_s,
+        min_red_s,
+        pedestrian_crossing_distance_ft,
+        pedestrian_walking_speed_fps,
+        provided_ped_clearance_s,
+        g_fps2,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            approach_speed_mph,
+            intersection_width_ft,
+            reaction_time_s,
+            deceleration_rate_fps2,
+            vehicle_length_ft,
+            min_yellow_s,
+            max_yellow_s,
+            pedestrian_walking_speed_fps,
+            g_fps2,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_speed_or_geometry"}
+    if min_yellow_s >= max_yellow_s:
+        return {"pass": False, "reason": "invalid_yellow_limits"}
+    if (
+        provided_yellow_s < 0
+        or provided_red_s < 0
+        or min_red_s < 0
+        or pedestrian_crossing_distance_ft < 0
+        or provided_ped_clearance_s < 0
+    ):
+        return {"pass": False, "reason": "negative_interval_or_distance"}
+
+    # Approach velocity v (ft/s) = 1.467 * V (mph)
+    v_fps = approach_speed_mph * (5280.0 / 3600.0)
+
+    # Grade factor G as decimal (positive for upgrade, negative for downgrade)
+    g_decimal = grade_pct / 100.0
+    eff_decel = deceleration_rate_fps2 + (g_fps2 * g_decimal)
+    if eff_decel <= 0.0:
+        return {"pass": False, "reason": "excessive_downgrade_cannot_stop"}
+
+    # ITE Yellow Change Interval formula: Y = t + v / [2 * (a + g * G)]
+    y_calc = reaction_time_s + (v_fps / (2.0 * eff_decel))
+
+    # MUTCD Section 4D.26 bounds (3.0s to 6.0s default)
+    if y_calc < min_yellow_s:
+        y_design = min_yellow_s
+        excess_yellow = 0.0
+    elif y_calc > max_yellow_s and cap_yellow_at_max:
+        y_design = max_yellow_s
+        excess_yellow = y_calc - max_yellow_s
+    else:
+        y_design = y_calc
+        excess_yellow = 0.0
+
+    # ITE Red Clearance Interval formula: R = (W + L) / v
+    r_calc = (intersection_width_ft + vehicle_length_ft) / v_fps
+    r_design = max(min_red_s, r_calc + excess_yellow)
+    total_clearance_req_s = y_design + r_design
+
+    # Timing verification gates
+    yellow_ok = True
+    yellow_dcr = 0.0
+    if provided_yellow_s > 0.0:
+        yellow_dcr = y_design / provided_yellow_s
+        yellow_ok = yellow_dcr <= 1.0
+
+    red_ok = True
+    red_dcr = 0.0
+    if provided_red_s > 0.0:
+        red_dcr = r_design / provided_red_s
+        red_ok = red_dcr <= 1.0
+
+    total_dcr = 0.0
+    if provided_yellow_s > 0.0 and provided_red_s > 0.0:
+        total_provided = provided_yellow_s + provided_red_s
+        total_dcr = total_clearance_req_s / total_provided
+
+    # Optional Pedestrian Clearance Interval (MUTCD 4E.06): FDW = D_ped / S_ped
+    ped_ok = True
+    ped_dcr = None
+    ped_clearance_req_s = None
+    if pedestrian_crossing_distance_ft > 0.0:
+        ped_clearance_req_s = pedestrian_crossing_distance_ft / pedestrian_walking_speed_fps
+        if provided_ped_clearance_s > 0.0:
+            ped_dcr = ped_clearance_req_s / provided_ped_clearance_s
+            ped_ok = ped_dcr <= 1.0
+
+    dcr_candidates = [yellow_dcr, red_dcr, total_dcr]
+    if ped_dcr is not None:
+        dcr_candidates.append(ped_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = yellow_ok and red_ok and ped_ok and (gov_dcr <= 1.0 if (provided_yellow_s > 0 or provided_red_s > 0) else True)
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "yellow_required_s": round(y_design, 2),
+        "yellow_calculated_s": round(y_calc, 2),
+        "red_required_s": round(r_design, 2),
+        "red_calculated_s": round(r_calc, 2),
+        "total_clearance_s": round(total_clearance_req_s, 2),
+        "excess_yellow_transferred_s": round(excess_yellow, 2),
+        "ped_clearance_req_s": round(ped_clearance_req_s, 2) if ped_clearance_req_s is not None else None,
+        "approach_velocity_fps": round(v_fps, 2),
+        "yellow_ok": yellow_ok,
+        "red_ok": red_ok,
+        "ped_ok": ped_ok,
+    }

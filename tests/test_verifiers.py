@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_ite_signal_clearance_intervals,
     verify_nec_transformer_overcurrent_protection,
     verify_aci_corbel_capacity,
     verify_aci_beam_deflection,
@@ -5498,6 +5499,115 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg_sec["pass"])
         self.assertEqual(res_neg_sec["reason"], "negative_secondary_ocpd")
+
+
+    def test_ite_signal_clearance_intervals(self) -> None:
+        from harness.verifiers import verify_ite_signal_clearance_intervals
+
+        # Standard level arterial approach (45 mph, 60 ft intersection) passing
+        res_pass = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=45.0,
+            intersection_width_ft=60.0,
+            grade_pct=0.0,
+            provided_yellow_s=4.5,
+            provided_red_s=1.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["approach_velocity_fps"], 66.0, places=1)
+        self.assertAlmostEqual(res_pass["yellow_calculated_s"], 4.30, places=2)
+        self.assertEqual(res_pass["yellow_required_s"], 4.30)
+        self.assertAlmostEqual(res_pass["red_calculated_s"], 1.21, places=2)
+        self.assertEqual(res_pass["red_required_s"], 1.21)
+        self.assertAlmostEqual(res_pass["total_clearance_s"], 5.51, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["yellow_ok"])
+        self.assertTrue(res_pass["red_ok"])
+
+        # High speed downhill approach (65 mph, -4% grade) triggering 6.0s yellow cap
+        # and transferring excess yellow time to all-red clearance
+        res_cap = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=65.0,
+            intersection_width_ft=80.0,
+            grade_pct=-4.0,
+            provided_yellow_s=6.0,
+            provided_red_s=2.0,
+            cap_yellow_at_max=True,
+        )
+        self.assertTrue(res_cap["pass"])
+        self.assertGreater(res_cap["yellow_calculated_s"], 6.0)
+        self.assertEqual(res_cap["yellow_required_s"], 6.0)
+        self.assertGreater(res_cap["excess_yellow_transferred_s"], 0.0)
+        self.assertGreater(res_cap["red_required_s"], res_cap["red_calculated_s"])
+        self.assertLessEqual(res_cap["dcr"], 1.0)
+
+        # Inadequate yellow change interval failure
+        res_fail_yellow = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=45.0,
+            intersection_width_ft=60.0,
+            provided_yellow_s=3.5,
+            provided_red_s=2.0,
+        )
+        self.assertFalse(res_fail_yellow["pass"])
+        self.assertFalse(res_fail_yellow["yellow_ok"])
+        self.assertGreater(res_fail_yellow["dcr"], 1.0)
+
+        # Inadequate red clearance interval failure
+        res_fail_red = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=45.0,
+            intersection_width_ft=100.0,
+            provided_yellow_s=4.5,
+            provided_red_s=1.0,
+        )
+        self.assertFalse(res_fail_red["pass"])
+        self.assertFalse(res_fail_red["red_ok"])
+        self.assertGreater(res_fail_red["dcr"], 1.0)
+
+        # Pedestrian clearance interval check
+        res_ped = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=35.0,
+            intersection_width_ft=50.0,
+            provided_yellow_s=4.0,
+            provided_red_s=1.5,
+            pedestrian_crossing_distance_ft=56.0,
+            pedestrian_walking_speed_fps=3.5,
+            provided_ped_clearance_s=16.0,
+        )
+        self.assertTrue(res_ped["pass"])
+        self.assertEqual(res_ped["ped_clearance_req_s"], 16.0)
+        self.assertTrue(res_ped["ped_ok"])
+
+        # Extreme downgrade rendering braking impossible
+        res_steep = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=45.0,
+            intersection_width_ft=60.0,
+            grade_pct=-35.0,
+        )
+        self.assertFalse(res_steep["pass"])
+        self.assertEqual(res_steep["reason"], "excessive_downgrade_cannot_stop")
+
+        # Input error validation checks
+        res_nan = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=float("nan"),
+            intersection_width_ft=60.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=-45.0,
+            intersection_width_ft=60.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_speed_or_geometry")
+
+        res_inv_limits = verify_ite_signal_clearance_intervals(
+            approach_speed_mph=45.0,
+            intersection_width_ft=60.0,
+            min_yellow_s=6.0,
+            max_yellow_s=4.0,
+        )
+        self.assertFalse(res_inv_limits["pass"])
+        self.assertEqual(res_inv_limits["reason"], "invalid_yellow_limits")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+{
+  "score": 72.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ite_signal_clearance_intervals",
+    "rationale": "Implements the ITE 2020 / MUTCD Section 4D.26 kinematic equations for traffic signal yellow change interval and all-red clearance interval, including approach grade effects, the 3.0-to-6.0-second yellow limits, all-red transfer, and pedestrian clearance checks.",
+    "model": "gemini-3.8-flash"
+  }
+}
