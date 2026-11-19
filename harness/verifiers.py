@@ -8637,3 +8637,98 @@ def verify_nec_multimotor_feeder_sizing(
         "conductor_ok": conductor_ok,
         "ocpd_ok": ocpd_ok,
     }
+
+
+def verify_nfpa54_fuel_gas_pipe_sizing(
+    demand_btuh: float,
+    pipe_inside_diameter_in: float,
+    equivalent_length_ft: float,
+    pressure_drop_in_wc: float = 0.50,
+    gas_type: str = "natural_gas",
+    specific_gravity: float = 0.0,
+    heating_value_btu_per_cuft: float = 0.0,
+    max_velocity_fps: float = 50.0,
+) -> Dict[str, Any]:
+    """NFPA 54 (ANSI Z223.1) & IFGC Section 402 fuel gas pipe sizing via Spitzglass formula for low-pressure systems (<= 0.5 psi)."""
+    scalars = [
+        demand_btuh,
+        pipe_inside_diameter_in,
+        equivalent_length_ft,
+        pressure_drop_in_wc,
+        specific_gravity,
+        heating_value_btu_per_cuft,
+        max_velocity_fps,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if demand_btuh < 0:
+        return {"pass": False, "reason": "negative_demand_input"}
+    if (
+        min(
+            pipe_inside_diameter_in,
+            equivalent_length_ft,
+            pressure_drop_in_wc,
+            max_velocity_fps,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_pressure"}
+    if specific_gravity < 0 or heating_value_btu_per_cuft < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+
+    # Fuel gas properties per NFPA 54 / IFGC Table 402.4
+    gas_clean = gas_type.strip().lower().replace(" ", "_").replace("-", "_")
+    if "propane" in gas_clean or "lp" in gas_clean:
+        default_sg = 1.50
+        default_btu = 2500.0
+        norm_gas = "propane"
+    elif "natural" in gas_clean or "ng" in gas_clean or "methane" in gas_clean:
+        default_sg = 0.60
+        default_btu = 1000.0
+        norm_gas = "natural_gas"
+    else:
+        return {"pass": False, "reason": "invalid_gas_type"}
+
+    sg = specific_gravity if specific_gravity > 0.0 else default_sg
+    btu_cuft = heating_value_btu_per_cuft if heating_value_btu_per_cuft > 0.0 else default_btu
+
+    # Volumetric gas demand in cubic feet per hour (CFH)
+    demand_cfh = demand_btuh / btu_cuft
+
+    # NFPA 54 / IFGC Spitzglass low-pressure formula (P <= 0.5 psi / 14 in. w.c.):
+    # Q = 3550 * sqrt((delta_H * D^5) / (S * L * (1 + 3.6/D + 0.03*D)))
+    d = pipe_inside_diameter_in
+    denom_term = 1.0 + (3.6 / d) + (0.03 * d)
+    denom = sg * equivalent_length_ft * denom_term
+    num = pressure_drop_in_wc * (d**5)
+    q_capacity_cfh = 3550.0 * math.sqrt(num / denom)
+    capacity_btuh = q_capacity_cfh * btu_cuft
+
+    # Gas flow velocity check to avoid pipe erosion and whistle noise
+    area_sqft = (math.pi * ((d / 12.0) ** 2)) / 4.0
+    q_demand_cfs = demand_cfh / 3600.0
+    velocity_fps = (q_demand_cfs / area_sqft) if area_sqft > 0 else 0.0
+
+    flow_dcr = demand_cfh / q_capacity_cfh if q_capacity_cfh > 0 else float("inf")
+    vel_dcr = velocity_fps / max_velocity_fps if max_velocity_fps > 0 else float("inf")
+    gov_dcr = max(flow_dcr, vel_dcr)
+
+    flow_ok = flow_dcr <= 1.0
+    vel_ok = vel_dcr <= 1.0
+    passed = flow_ok and vel_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "flow_dcr": round(flow_dcr, 4),
+        "velocity_dcr": round(vel_dcr, 4),
+        "demand_cfh": round(demand_cfh, 2),
+        "capacity_cfh": round(q_capacity_cfh, 2),
+        "capacity_btuh": round(capacity_btuh, 1),
+        "gas_velocity_fps": round(velocity_fps, 2),
+        "specific_gravity": round(sg, 3),
+        "heating_value_btu_per_cuft": round(btu_cuft, 1),
+        "gas_type": norm_gas,
+        "capacity_ok": flow_ok,
+        "velocity_ok": vel_ok,
+    }

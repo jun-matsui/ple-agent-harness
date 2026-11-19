@@ -1,0 +1,9 @@
+{
+  "score": 95.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nfpa54_fuel_gas_pipe_sizing",
+    "rationale": "Evaluates low-pressure fuel gas piping capacity, pressure drop, and gas velocity per NFPA 54 (National Fuel Gas Code) and International Fuel Gas Code (IFGC) Section 402 using the Spitzglass equation.",
+    "model": "gemini-3.8-flash"
+  }
+}

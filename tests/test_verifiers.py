@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nfpa54_fuel_gas_pipe_sizing,
     verify_nec_multimotor_feeder_sizing,
     verify_asce7_components_and_cladding_wind,
     verify_aisc_slip_critical_connection,
@@ -8373,6 +8374,89 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_motor_fla")
+
+
+    def test_nfpa54_fuel_gas_pipe_sizing(self) -> None:
+        from harness.verifiers import verify_nfpa54_fuel_gas_pipe_sizing
+
+        # Standard passing 1" Sch 40 natural gas line supplying 120,000 Btuh furnace at 100 ft
+        # D = 1.049 in, L = 100 ft, dP = 0.5 in. w.c., capacity ~ 172.9 CFH
+        res_pass = verify_nfpa54_fuel_gas_pipe_sizing(
+            demand_btuh=120000.0,
+            pipe_inside_diameter_in=1.049,
+            equivalent_length_ft=100.0,
+            pressure_drop_in_wc=0.50,
+            gas_type="natural_gas",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["demand_cfh"], 120.0)
+        self.assertAlmostEqual(res_pass["capacity_cfh"], 172.88, places=1)
+        self.assertAlmostEqual(res_pass["capacity_btuh"], 172884.0, places=-1)
+        self.assertAlmostEqual(res_pass["flow_dcr"], 120.0 / 172.88, places=3)
+        self.assertAlmostEqual(res_pass["gas_velocity_fps"], 5.56, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["capacity_ok"])
+        self.assertTrue(res_pass["velocity_ok"])
+
+        # Demand exceeding pipe conveyance capacity failure (220,000 Btuh on 1" line)
+        res_fail_cap = verify_nfpa54_fuel_gas_pipe_sizing(
+            demand_btuh=220000.0,
+            pipe_inside_diameter_in=1.049,
+            equivalent_length_ft=100.0,
+            pressure_drop_in_wc=0.50,
+        )
+        self.assertFalse(res_fail_cap["pass"])
+        self.assertFalse(res_fail_cap["capacity_ok"])
+        self.assertGreater(res_fail_cap["flow_dcr"], 1.0)
+
+        # Propane fuel gas check (SG = 1.50, Heating value = 2500 Btu/cuft)
+        res_propane = verify_nfpa54_fuel_gas_pipe_sizing(
+            demand_btuh=200000.0,
+            pipe_inside_diameter_in=1.049,
+            equivalent_length_ft=100.0,
+            gas_type="propane",
+        )
+        self.assertTrue(res_propane["pass"])
+        self.assertEqual(res_propane["demand_cfh"], 80.0)
+        self.assertAlmostEqual(res_propane["capacity_cfh"], 172.88 * (0.6 / 1.5) ** 0.5, places=1)
+        self.assertLess(res_propane["dcr"], 1.0)
+
+        # Excessive gas velocity failure (restrictive max velocity cap)
+        res_vel_fail = verify_nfpa54_fuel_gas_pipe_sizing(
+            demand_btuh=150000.0,
+            pipe_inside_diameter_in=0.824,
+            equivalent_length_ft=20.0,
+            max_velocity_fps=8.0,
+        )
+        self.assertFalse(res_vel_fail["pass"])
+        self.assertFalse(res_vel_fail["velocity_ok"])
+        self.assertGreater(res_vel_fail["velocity_dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_nfpa54_fuel_gas_pipe_sizing(
+            demand_btuh=float("nan"),
+            pipe_inside_diameter_in=1.049,
+            equivalent_length_ft=100.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nfpa54_fuel_gas_pipe_sizing(
+            demand_btuh=-50000.0,
+            pipe_inside_diameter_in=1.049,
+            equivalent_length_ft=100.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_demand_input")
+
+        res_inv_gas = verify_nfpa54_fuel_gas_pipe_sizing(
+            demand_btuh=100000.0,
+            pipe_inside_diameter_in=1.049,
+            equivalent_length_ft=100.0,
+            gas_type="hydrogen_cyanide",
+        )
+        self.assertFalse(res_inv_gas["pass"])
+        self.assertEqual(res_inv_gas["reason"], "invalid_gas_type")
 
 
 if __name__ == "__main__":
