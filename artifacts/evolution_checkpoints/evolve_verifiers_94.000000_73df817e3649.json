@@ -1,0 +1,9 @@
+{
+  "score": 94.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_multimotor_feeder_sizing",
+    "rationale": "Evaluates multi-motor feeder conductor ampacity and overcurrent protection under NEC 430.24, 430.62(A), and 240.6(A), strictly enforcing the code-mandated prohibition against rounding up feeder OCPDs to the next higher standard rating.",
+    "model": "gemini-3.8-flash"
+  }
+}

@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_multimotor_feeder_sizing,
     verify_asce7_components_and_cladding_wind,
     verify_aisc_slip_critical_connection,
     verify_spangler_pipe_deflection,
@@ -8292,6 +8293,86 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_geometry_or_velocity")
+
+
+    def test_nec_multimotor_feeder_sizing(self) -> None:
+        from harness.verifiers import verify_nec_multimotor_feeder_sizing
+
+        # Standard passing multi-motor feeder: motors 50A, 28A, 14A
+        # Conductor: 1.25 * 50 + 28 + 14 = 104.5A. Conductor provided = 115A (Pass)
+        # Branch OCPD for 50A: 50 * 2.5 = 125A breaker.
+        # Max Feeder OCPD: 125 + 28 + 14 = 167A. Standard ratings: 150, 175.
+        # NEC 430.62(A) requires rounding DOWN to 150A. Feeder OCPD provided = 150A (Pass)
+        res_pass = verify_nec_multimotor_feeder_sizing(
+            motor_flas_a=[50.0, 28.0, 14.0],
+            feeder_conductor_ampacity_a=115.0,
+            feeder_ocpd_rating_a=150.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["largest_motor_fla_a"], 50.0)
+        self.assertEqual(res_pass["required_feeder_ampacity_a"], 104.5)
+        self.assertEqual(res_pass["largest_branch_ocpd_a"], 125.0)
+        self.assertEqual(res_pass["raw_max_feeder_ocpd_a"], 167.0)
+        self.assertEqual(res_pass["max_allowed_feeder_ocpd_a"], 150.0)
+        self.assertAlmostEqual(res_pass["conductor_dcr"], 104.5 / 115.0, places=3)
+        self.assertEqual(res_pass["ocpd_dcr"], 1.0)
+        self.assertTrue(res_pass["conductor_ok"])
+        self.assertTrue(res_pass["ocpd_ok"])
+
+        # Feeder OCPD rounded UP to next standard size (175A) fails NEC 430.62(A) prohibition
+        res_round_up_fail = verify_nec_multimotor_feeder_sizing(
+            motor_flas_a=[50.0, 28.0, 14.0],
+            feeder_conductor_ampacity_a=115.0,
+            feeder_ocpd_rating_a=175.0,
+        )
+        self.assertFalse(res_round_up_fail["pass"])
+        self.assertFalse(res_round_up_fail["ocpd_ok"])
+        self.assertGreater(res_round_up_fail["ocpd_dcr"], 1.0)
+
+        # Undersized feeder conductor ampacity failure
+        res_cond_fail = verify_nec_multimotor_feeder_sizing(
+            motor_flas_a=[50.0, 28.0, 14.0],
+            feeder_conductor_ampacity_a=100.0,
+            feeder_ocpd_rating_a=150.0,
+        )
+        self.assertFalse(res_cond_fail["pass"])
+        self.assertFalse(res_cond_fail["conductor_ok"])
+        self.assertGreater(res_cond_fail["conductor_dcr"], 1.0)
+
+        # Derating check with high ambient temperature and conductor bundling
+        res_derate = verify_nec_multimotor_feeder_sizing(
+            motor_flas_a=[50.0, 28.0, 14.0],
+            feeder_conductor_ampacity_a=150.0,
+            feeder_ocpd_rating_a=150.0,
+            ambient_temp_c=45.0,
+            num_conductors=6,
+        )
+        self.assertAlmostEqual(res_derate["derated_conductor_ampacity_a"], 150.0 * 0.80 * ((75 - 45) / (75 - 30)) ** 0.5, places=1)
+
+        # Input error validation checks
+        res_empty = verify_nec_multimotor_feeder_sizing(
+            motor_flas_a=[],
+            feeder_conductor_ampacity_a=100.0,
+            feeder_ocpd_rating_a=100.0,
+        )
+        self.assertFalse(res_empty["pass"])
+        self.assertEqual(res_empty["reason"], "empty_motor_list")
+
+        res_nan = verify_nec_multimotor_feeder_sizing(
+            motor_flas_a=[float("nan")],
+            feeder_conductor_ampacity_a=100.0,
+            feeder_ocpd_rating_a=100.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_multimotor_feeder_sizing(
+            motor_flas_a=[50.0, -10.0],
+            feeder_conductor_ampacity_a=100.0,
+            feeder_ocpd_rating_a=100.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_motor_fla")
 
 
 if __name__ == "__main__":

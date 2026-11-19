@@ -8497,3 +8497,143 @@ def verify_asce7_components_and_cladding_wind(
         "gc_pi": round(gc_pi, 2),
         "zone_applied": norm_zone,
     }
+
+
+def verify_nec_multimotor_feeder_sizing(
+    motor_flas_a: Sequence[float],
+    feeder_conductor_ampacity_a: float,
+    feeder_ocpd_rating_a: float,
+    branch_ocpd_ratings_a: Sequence[float] = (),
+    largest_motor_ocpd_type: str = "inverse_time_breaker",
+    continuous_other_load_a: float = 0.0,
+    non_continuous_other_load_a: float = 0.0,
+    ambient_temp_c: float = 30.0,
+    num_conductors: int = 3,
+    temp_rating_c: float = 75.0,
+) -> Dict[str, Any]:
+    """NEC 430.24, 430.62(A), and 240.6(A) multimotor feeder conductor ampacity and OCPD sizing gate."""
+    scalars = [
+        feeder_conductor_ampacity_a,
+        feeder_ocpd_rating_a,
+        continuous_other_load_a,
+        non_continuous_other_load_a,
+        ambient_temp_c,
+        float(num_conductors),
+        temp_rating_c,
+    ]
+    if any(math.isnan(val) for val in scalars) or any(math.isnan(m) for m in motor_flas_a) or any(math.isnan(b) for b in branch_ocpd_ratings_a):
+        return {"pass": False, "reason": "nan_input"}
+    if not motor_flas_a:
+        return {"pass": False, "reason": "empty_motor_list"}
+    if any(m <= 0 for m in motor_flas_a):
+        return {"pass": False, "reason": "non_positive_motor_fla"}
+    if feeder_conductor_ampacity_a <= 0 or feeder_ocpd_rating_a <= 0:
+        return {"pass": False, "reason": "non_positive_conductor_or_ocpd_rating"}
+    if continuous_other_load_a < 0 or non_continuous_other_load_a < 0:
+        return {"pass": False, "reason": "negative_other_load"}
+    if any(b < 0 for b in branch_ocpd_ratings_a):
+        return {"pass": False, "reason": "negative_branch_ocpd"}
+    if num_conductors < 1:
+        return {"pass": False, "reason": "invalid_conductor_count"}
+    if temp_rating_c not in (60.0, 75.0, 90.0):
+        return {"pass": False, "reason": "invalid_temperature_rating"}
+    if ambient_temp_c >= temp_rating_c:
+        return {"pass": False, "reason": "ambient_exceeds_rating"}
+
+    # NEC 310.15 temperature correction factor
+    if ambient_temp_c == 30.0:
+        temp_factor = 1.0
+    else:
+        temp_factor = math.sqrt((temp_rating_c - ambient_temp_c) / (temp_rating_c - 30.0))
+
+    # NEC Table 310.15(C)(1) conductor bundling adjustment factor
+    if num_conductors <= 3:
+        bundle_factor = 1.0
+    elif num_conductors <= 6:
+        bundle_factor = 0.80
+    elif num_conductors <= 9:
+        bundle_factor = 0.70
+    elif num_conductors <= 20:
+        bundle_factor = 0.50
+    elif num_conductors <= 30:
+        bundle_factor = 0.45
+    elif num_conductors <= 40:
+        bundle_factor = 0.40
+    else:
+        bundle_factor = 0.35
+
+    derated_conductor_ampacity_a = feeder_conductor_ampacity_a * temp_factor * bundle_factor
+
+    # NEC 430.24 Feeder Conductor Sizing: 125% of largest motor FLA + sum of other motor FLAs + other loads
+    sorted_flas = sorted(motor_flas_a, reverse=True)
+    largest_motor_fla = sorted_flas[0]
+    other_motors_sum = sum(sorted_flas[1:])
+    required_feeder_ampacity_a = (
+        1.25 * largest_motor_fla
+        + other_motors_sum
+        + 1.25 * continuous_other_load_a
+        + non_continuous_other_load_a
+    )
+
+    conductor_dcr = required_feeder_ampacity_a / derated_conductor_ampacity_a if derated_conductor_ampacity_a > 0 else float("inf")
+    conductor_ok = conductor_dcr <= 1.0
+
+    # NEC 430.62(A) Feeder OCPD Sizing: Largest branch OCPD + sum of other motor FLAs + other loads
+    ocpd_multipliers = {
+        "inverse_time_breaker": 2.50,
+        "dual_element_fuse": 1.75,
+        "non_time_delay_fuse": 3.00,
+        "instantaneous_trip": 8.00,
+    }
+    type_key = largest_motor_ocpd_type.strip().lower()
+    if type_key not in ocpd_multipliers:
+        return {"pass": False, "reason": "invalid_ocpd_type"}
+
+    standard_ratings = [
+        15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100,
+        110, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450,
+        500, 600, 700, 800, 1000, 1200, 1600, 2000, 2500, 3000,
+        4000, 5000, 6000,
+    ]
+
+    if branch_ocpd_ratings_a and len(branch_ocpd_ratings_a) == len(motor_flas_a):
+        # Use provided branch OCPD of the governing motor
+        max_branch_ocpd = max(branch_ocpd_ratings_a)
+    else:
+        # Calculate largest branch OCPD using standard branch-circuit rule (NEC 430.52)
+        raw_branch = largest_motor_fla * ocpd_multipliers[type_key]
+        # Branch circuits allow rounding UP to next standard rating per NEC 430.52(C)(1) Ex 1
+        max_branch_ocpd = float(next((r for r in standard_ratings if r >= (raw_branch - 1e-6)), raw_branch))
+
+    raw_max_feeder_ocpd_a = (
+        max_branch_ocpd
+        + other_motors_sum
+        + continuous_other_load_a
+        + non_continuous_other_load_a
+    )
+
+    # CRITICAL: NEC 430.62(A) strictly states the next higher standard rating SHALL NOT be permitted.
+    # Feeder OCPD must be rounded DOWN to the next lower (or equal) standard rating.
+    eligible_ratings = [r for r in standard_ratings if float(r) <= (raw_max_feeder_ocpd_a + 1e-6)]
+    max_allowed_feeder_ocpd_a = float(eligible_ratings[-1]) if eligible_ratings else float(standard_ratings[0])
+
+    ocpd_dcr = feeder_ocpd_rating_a / max_allowed_feeder_ocpd_a if max_allowed_feeder_ocpd_a > 0 else float("inf")
+    ocpd_ok = feeder_ocpd_rating_a <= max_allowed_feeder_ocpd_a
+
+    gov_dcr = max(conductor_dcr, ocpd_dcr)
+    passed = conductor_ok and ocpd_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "conductor_dcr": round(conductor_dcr, 4),
+        "ocpd_dcr": round(ocpd_dcr, 4),
+        "required_feeder_ampacity_a": round(required_feeder_ampacity_a, 2),
+        "derated_conductor_ampacity_a": round(derated_conductor_ampacity_a, 2),
+        "max_allowed_feeder_ocpd_a": round(max_allowed_feeder_ocpd_a, 2),
+        "raw_max_feeder_ocpd_a": round(raw_max_feeder_ocpd_a, 2),
+        "largest_motor_fla_a": round(largest_motor_fla, 2),
+        "largest_branch_ocpd_a": round(max_branch_ocpd, 2),
+        "conductor_ok": conductor_ok,
+        "ocpd_ok": ocpd_ok,
+    }
