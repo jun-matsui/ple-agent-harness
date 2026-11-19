@@ -5879,3 +5879,124 @@ def verify_aci_anchor_bolt_tension(
         "anc_sqin": round(anc, 2),
         "governing_limit_state": gov_state,
     }
+
+
+def verify_nfpa20_fire_pump_performance(
+    rated_flow_gpm: float,
+    rated_pressure_psi: float,
+    churn_pressure_psi: float,
+    flow_150_pressure_psi: float,
+    demand_flow_gpm: float,
+    demand_pressure_psi: float,
+    suction_pressure_at_150_psi: float = 5.0,
+    motor_nameplate_hp: float = 0.0,
+    pump_efficiency_at_150_pct: float = 70.0,
+    max_churn_pct: float = 140.0,
+    min_150_head_pct: float = 65.0,
+    min_suction_psi: float = 0.0,
+) -> Dict[str, Any]:
+    """NFPA 20 (2019/2022) centrifugal fire pump rating, head curve, demand point, suction, and motor gate."""
+    scalars = [
+        rated_flow_gpm,
+        rated_pressure_psi,
+        churn_pressure_psi,
+        flow_150_pressure_psi,
+        demand_flow_gpm,
+        demand_pressure_psi,
+        suction_pressure_at_150_psi,
+        motor_nameplate_hp,
+        pump_efficiency_at_150_pct,
+        max_churn_pct,
+        min_150_head_pct,
+        min_suction_psi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            rated_flow_gpm,
+            rated_pressure_psi,
+            churn_pressure_psi,
+            flow_150_pressure_psi,
+            demand_flow_gpm,
+            demand_pressure_psi,
+            pump_efficiency_at_150_pct,
+            max_churn_pct,
+            min_150_head_pct,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_flow_pressure_or_efficiency"}
+    if motor_nameplate_hp < 0:
+        return {"pass": False, "reason": "negative_motor_hp"}
+    if churn_pressure_psi < rated_pressure_psi:
+        return {"pass": False, "reason": "churn_pressure_below_rated_pressure"}
+    if flow_150_pressure_psi >= rated_pressure_psi:
+        return {"pass": False, "reason": "peak_pressure_exceeds_rated_pressure"}
+
+    # NFPA 20 Section 4.7.6 Churn (shutoff) net head limit: <= 140% of rated
+    max_allowed_churn_psi = (max_churn_pct / 100.0) * rated_pressure_psi
+    churn_ok = churn_pressure_psi <= max_allowed_churn_psi
+    churn_dcr = churn_pressure_psi / max_allowed_churn_psi
+
+    # NFPA 20 Section 4.7.6 Peak (150% flow) net head limit: >= 65% of rated
+    min_allowed_150_psi = (min_150_head_pct / 100.0) * rated_pressure_psi
+    head_150_ok = flow_150_pressure_psi >= min_allowed_150_psi
+    head_150_dcr = min_allowed_150_psi / flow_150_pressure_psi if flow_150_pressure_psi > 0 else float("inf")
+
+    # NFPA 20 Section 4.7.2 Maximum system demand cannot exceed 150% rated flow
+    max_flow_capacity_gpm = 1.50 * rated_flow_gpm
+    flow_dcr = demand_flow_gpm / max_flow_capacity_gpm
+    flow_ok = flow_dcr <= 1.0
+
+    # Fit quadratic pump curve P(Q) = A*Q^2 + B*Q + C through (0, P_churn), (Qr, Pr), (1.5*Qr, P_150)
+    delta_1 = rated_pressure_psi - churn_pressure_psi
+    delta_2 = flow_150_pressure_psi - churn_pressure_psi
+    qr = rated_flow_gpm
+    a_coeff = (delta_2 - 1.5 * delta_1) / (0.75 * (qr**2))
+    b_coeff = (delta_1 - a_coeff * (qr**2)) / qr
+    c_coeff = churn_pressure_psi
+
+    # Available net pump discharge pressure at system demand flow
+    p_available_psi = a_coeff * (demand_flow_gpm**2) + b_coeff * demand_flow_gpm + c_coeff
+    press_dcr = demand_pressure_psi / p_available_psi if p_available_psi > 0 else float("inf")
+    press_ok = press_dcr <= 1.0
+
+    # NFPA 20 Section 4.16.1.1 Suction pressure at 150% flow >= 0 psi gauge
+    suction_ok = suction_pressure_at_150_psi >= min_suction_psi
+
+    # Motor nameplate sizing check at 150% peak flow power (BHP = Q * H / (1714 * eta))
+    q_peak_gpm = 1.50 * rated_flow_gpm
+    bhp_peak = (q_peak_gpm * flow_150_pressure_psi) / (
+        1714.0 * (pump_efficiency_at_150_pct / 100.0)
+    )
+    if motor_nameplate_hp > 0.0:
+        motor_dcr = bhp_peak / motor_nameplate_hp
+        motor_ok = motor_dcr <= 1.0
+    else:
+        motor_dcr = None
+        motor_ok = True
+
+    dcr_candidates = [churn_dcr, head_150_dcr, flow_dcr, press_dcr]
+    if motor_dcr is not None:
+        dcr_candidates.append(motor_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = churn_ok and head_150_ok and flow_ok and press_ok and suction_ok and motor_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "p_available_at_demand_psi": round(p_available_psi, 2),
+        "pressure_dcr": round(press_dcr, 4),
+        "flow_dcr": round(flow_dcr, 4),
+        "churn_dcr": round(churn_dcr, 4),
+        "head_150_dcr": round(head_150_dcr, 4),
+        "bhp_peak": round(bhp_peak, 2),
+        "motor_dcr": round(motor_dcr, 4) if motor_dcr is not None else None,
+        "churn_ok": churn_ok,
+        "head_150_ok": head_150_ok,
+        "flow_ok": flow_ok,
+        "pressure_ok": press_ok,
+        "suction_ok": suction_ok,
+        "motor_ok": motor_ok,
+    }

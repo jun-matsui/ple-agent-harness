@@ -1,0 +1,9 @@
+{
+  "score": 74.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nfpa20_fire_pump_performance",
+    "rationale": "Implements NFPA 20 (2019/2022) Section 4.7 & 4.16 centrifugal fire pump acceptance testing, characteristic curve interpolation, system demand adequacy, 150% flow suction cavitation limits, and motor nameplate sizing.",
+    "model": "gemini-3.8-flash"
+  }
+}

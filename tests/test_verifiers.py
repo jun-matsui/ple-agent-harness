@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nfpa20_fire_pump_performance,
     verify_aci_anchor_bolt_tension,
     verify_ite_signal_clearance_intervals,
     verify_nec_transformer_overcurrent_protection,
@@ -5708,6 +5709,138 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_type["pass"])
         self.assertEqual(res_inv_type["reason"], "invalid_anchor_type")
+
+
+    def test_nfpa20_fire_pump_performance(self) -> None:
+        from harness.verifiers import verify_nfpa20_fire_pump_performance
+
+        # Standard passing commercial fire pump (1000 gpm @ 100 psi, 120 psi churn, 70 psi @ 150%)
+        # Demand point: 1200 gpm @ 85 psi with 100 HP motor
+        res_pass = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=1000.0,
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=120.0,
+            flow_150_pressure_psi=70.0,
+            demand_flow_gpm=1200.0,
+            demand_pressure_psi=85.0,
+            suction_pressure_at_150_psi=8.0,
+            motor_nameplate_hp=100.0,
+            pump_efficiency_at_150_pct=70.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["p_available_at_demand_psi"], 89.60, places=2)
+        self.assertAlmostEqual(res_pass["bhp_peak"], 87.51, places=1)
+        self.assertAlmostEqual(res_pass["pressure_dcr"], 85.0 / 89.60, places=3)
+        self.assertAlmostEqual(res_pass["flow_dcr"], 1200.0 / 1500.0, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["churn_ok"])
+        self.assertTrue(res_pass["head_150_ok"])
+        self.assertTrue(res_pass["suction_ok"])
+        self.assertTrue(res_pass["motor_ok"])
+
+        # Churn pressure exceeds 140% rated limit failure (NFPA 20 Section 4.7.6)
+        res_churn_fail = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=1000.0,
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=145.0,
+            flow_150_pressure_psi=70.0,
+            demand_flow_gpm=1000.0,
+            demand_pressure_psi=100.0,
+        )
+        self.assertFalse(res_churn_fail["pass"])
+        self.assertFalse(res_churn_fail["churn_ok"])
+        self.assertGreater(res_churn_fail["churn_dcr"], 1.0)
+
+        # 150% peak flow head falls below 65% limit failure (NFPA 20 Section 4.7.6)
+        res_head_fail = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=1000.0,
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=120.0,
+            flow_150_pressure_psi=60.0,
+            demand_flow_gpm=1000.0,
+            demand_pressure_psi=100.0,
+        )
+        self.assertFalse(res_head_fail["pass"])
+        self.assertFalse(res_head_fail["head_150_ok"])
+        self.assertGreater(res_head_fail["head_150_dcr"], 1.0)
+
+        # Demand flow exceeds 150% rated pump capacity failure (NFPA 20 Section 4.7.2)
+        res_flow_fail = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=1000.0,
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=120.0,
+            flow_150_pressure_psi=70.0,
+            demand_flow_gpm=1600.0,
+            demand_pressure_psi=60.0,
+        )
+        self.assertFalse(res_flow_fail["pass"])
+        self.assertFalse(res_flow_fail["flow_ok"])
+        self.assertGreater(res_flow_fail["flow_dcr"], 1.0)
+
+        # Demand pressure exceeds available pump curve at demand flow
+        res_press_fail = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=1000.0,
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=120.0,
+            flow_150_pressure_psi=70.0,
+            demand_flow_gpm=1200.0,
+            demand_pressure_psi=95.0,
+        )
+        self.assertFalse(res_press_fail["pass"])
+        self.assertFalse(res_press_fail["pressure_ok"])
+        self.assertGreater(res_press_fail["pressure_dcr"], 1.0)
+
+        # Motor nameplate HP undersized for 150% peak duty
+        res_motor_fail = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=1000.0,
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=120.0,
+            flow_150_pressure_psi=70.0,
+            demand_flow_gpm=1000.0,
+            demand_pressure_psi=100.0,
+            motor_nameplate_hp=75.0,
+            pump_efficiency_at_150_pct=70.0,
+        )
+        self.assertFalse(res_motor_fail["pass"])
+        self.assertFalse(res_motor_fail["motor_ok"])
+        self.assertGreater(res_motor_fail["motor_dcr"], 1.0)
+
+        # Cavitation failure: negative suction pressure at 150% flow
+        res_suction_fail = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=1000.0,
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=120.0,
+            flow_150_pressure_psi=70.0,
+            demand_flow_gpm=1000.0,
+            demand_pressure_psi=100.0,
+            suction_pressure_at_150_psi=-2.0,
+            min_suction_psi=0.0,
+        )
+        self.assertFalse(res_suction_fail["pass"])
+        self.assertFalse(res_suction_fail["suction_ok"])
+
+        # Input error handling checks
+        res_nan = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=float("nan"),
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=120.0,
+            flow_150_pressure_psi=70.0,
+            demand_flow_gpm=1000.0,
+            demand_pressure_psi=100.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_curve_err = verify_nfpa20_fire_pump_performance(
+            rated_flow_gpm=1000.0,
+            rated_pressure_psi=100.0,
+            churn_pressure_psi=90.0,
+            flow_150_pressure_psi=70.0,
+            demand_flow_gpm=1000.0,
+            demand_pressure_psi=80.0,
+        )
+        self.assertFalse(res_curve_err["pass"])
+        self.assertEqual(res_curve_err["reason"], "churn_pressure_below_rated_pressure")
 
 
 if __name__ == "__main__":
