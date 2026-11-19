@@ -5502,3 +5502,114 @@ def verify_aci_corbel_capacity(
         "asc_ok": asc_ok,
         "ah_ok": ah_ok,
     }
+
+
+def verify_nec_transformer_overcurrent_protection(
+    transformer_kva: float,
+    primary_voltage_v: float,
+    secondary_voltage_v: float,
+    primary_ocpd_a: float,
+    secondary_ocpd_a: float = 0.0,
+    three_phase: bool = True,
+    allow_next_standard_primary: bool = True,
+    allow_next_standard_secondary: bool = True,
+) -> Dict[str, Any]:
+    """NEC Table 450.3(B) and Section 240.6(A) transformer overcurrent protection gate (<= 1000V)."""
+    scalars = [
+        transformer_kva,
+        primary_voltage_v,
+        secondary_voltage_v,
+        primary_ocpd_a,
+        secondary_ocpd_a,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(transformer_kva, primary_voltage_v, secondary_voltage_v, primary_ocpd_a) <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_rating_or_voltage"}
+    if secondary_ocpd_a < 0:
+        return {"pass": False, "reason": "negative_secondary_ocpd"}
+
+    standard_ratings = [
+        15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100,
+        110, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450,
+        500, 600, 700, 800, 1000, 1200, 1600, 2000, 2500, 3000,
+        4000, 5000, 6000,
+    ]
+
+    def get_next_standard(val: float) -> float:
+        if val <= standard_ratings[0]:
+            return float(standard_ratings[0])
+        for r in standard_ratings:
+            if r >= (val - 1e-6):
+                return float(r)
+        return val
+
+    # Full load current calculations
+    if three_phase:
+        i1 = (transformer_kva * 1000.0) / (math.sqrt(3.0) * primary_voltage_v)
+        i2 = (transformer_kva * 1000.0) / (math.sqrt(3.0) * secondary_voltage_v)
+    else:
+        i1 = (transformer_kva * 1000.0) / primary_voltage_v
+        i2 = (transformer_kva * 1000.0) / secondary_voltage_v
+
+    is_primary_only = secondary_ocpd_a <= 0.0
+    if is_primary_only:
+        scheme = "primary_only"
+        if i1 >= 9.0:
+            raw_max_primary = 1.25 * i1
+            max_allowed_primary = (
+                get_next_standard(raw_max_primary)
+                if allow_next_standard_primary
+                else raw_max_primary
+            )
+        elif i1 >= 2.0:
+            max_allowed_primary = 1.67 * i1
+        else:
+            max_allowed_primary = 3.00 * i1
+
+        max_allowed_secondary = None
+        sec_dcr = None
+        sec_ok = True
+    else:
+        scheme = "primary_and_secondary"
+        raw_max_primary = 2.50 * i1
+        max_allowed_primary = (
+            get_next_standard(raw_max_primary)
+            if allow_next_standard_primary
+            else raw_max_primary
+        )
+
+        if i2 >= 9.0:
+            raw_max_sec = 1.25 * i2
+            max_allowed_secondary = (
+                get_next_standard(raw_max_sec)
+                if allow_next_standard_secondary
+                else raw_max_sec
+            )
+        else:
+            max_allowed_secondary = 1.67 * i2
+
+        sec_dcr = secondary_ocpd_a / max_allowed_secondary if max_allowed_secondary > 0 else float("inf")
+        sec_ok = secondary_ocpd_a <= max_allowed_secondary
+
+    prim_dcr = primary_ocpd_a / max_allowed_primary if max_allowed_primary > 0 else float("inf")
+    prim_ok = primary_ocpd_a <= max_allowed_primary
+
+    gov_dcr = max(prim_dcr, sec_dcr) if sec_dcr is not None else prim_dcr
+    passed = prim_ok and sec_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "primary_dcr": round(prim_dcr, 4),
+        "secondary_dcr": round(sec_dcr, 4) if sec_dcr is not None else None,
+        "primary_current_a": round(i1, 2),
+        "secondary_current_a": round(i2, 2),
+        "max_allowed_primary_a": round(max_allowed_primary, 2),
+        "max_allowed_secondary_a": round(max_allowed_secondary, 2) if max_allowed_secondary is not None else None,
+        "protection_scheme": scheme,
+        "primary_ok": prim_ok,
+        "secondary_ok": sec_ok,
+    }

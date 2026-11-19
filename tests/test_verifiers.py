@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_transformer_overcurrent_protection,
     verify_aci_corbel_capacity,
     verify_aci_beam_deflection,
     verify_aci_shear_friction,
@@ -5390,6 +5391,113 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_or_span")
+
+
+    def test_nec_transformer_overcurrent_protection(self) -> None:
+        from harness.verifiers import verify_nec_transformer_overcurrent_protection
+
+        # 45 kVA 480V to 208V 3-phase, Primary-only protection with Note 1 rounding
+        # I1 = 54.13 A >= 9 A; 125% = 67.66 A -> Next standard rating = 70 A
+        res_pass = verify_nec_transformer_overcurrent_protection(
+            transformer_kva=45.0,
+            primary_voltage_v=480.0,
+            secondary_voltage_v=208.0,
+            primary_ocpd_a=70.0,
+            three_phase=True,
+            allow_next_standard_primary=True,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["protection_scheme"], "primary_only")
+        self.assertAlmostEqual(res_pass["primary_current_a"], 54.13, places=2)
+        self.assertEqual(res_pass["max_allowed_primary_a"], 70.0)
+        self.assertAlmostEqual(res_pass["dcr"], 1.0, places=3)
+        self.assertTrue(res_pass["primary_ok"])
+        self.assertIsNone(res_pass["secondary_dcr"])
+
+        # Primary only failure with oversized 80 A breaker (exceeds 70 A max permitted)
+        res_fail_prim = verify_nec_transformer_overcurrent_protection(
+            transformer_kva=45.0,
+            primary_voltage_v=480.0,
+            secondary_voltage_v=208.0,
+            primary_ocpd_a=80.0,
+            three_phase=True,
+        )
+        self.assertFalse(res_fail_prim["pass"])
+        self.assertFalse(res_fail_prim["primary_ok"])
+        self.assertGreater(res_fail_prim["dcr"], 1.0)
+
+        # Primary and secondary protection scheme passing
+        # Primary max (250% of 54.13 A = 135.3 A -> 150 A standard)
+        # Secondary I2 = 124.9 A; max (125% of 124.9 A = 156.1 A -> 175 A standard)
+        res_both_pass = verify_nec_transformer_overcurrent_protection(
+            transformer_kva=45.0,
+            primary_voltage_v=480.0,
+            secondary_voltage_v=208.0,
+            primary_ocpd_a=125.0,
+            secondary_ocpd_a=150.0,
+            three_phase=True,
+        )
+        self.assertTrue(res_both_pass["pass"])
+        self.assertEqual(res_both_pass["protection_scheme"], "primary_and_secondary")
+        self.assertEqual(res_both_pass["max_allowed_primary_a"], 150.0)
+        self.assertEqual(res_both_pass["max_allowed_secondary_a"], 175.0)
+        self.assertLess(res_both_pass["primary_dcr"], 1.0)
+        self.assertLess(res_both_pass["secondary_dcr"], 1.0)
+
+        # Primary and secondary failure due to oversized secondary OCPD
+        res_both_fail = verify_nec_transformer_overcurrent_protection(
+            transformer_kva=45.0,
+            primary_voltage_v=480.0,
+            secondary_voltage_v=208.0,
+            primary_ocpd_a=125.0,
+            secondary_ocpd_a=200.0,
+            three_phase=True,
+        )
+        self.assertFalse(res_both_fail["pass"])
+        self.assertFalse(res_both_fail["secondary_ok"])
+        self.assertGreater(res_both_fail["secondary_dcr"], 1.0)
+
+        # Small single-phase transformer between 2 A and 9 A (167% rule without Note 1)
+        # 1 kVA, 240V to 120V: I1 = 4.17 A; max = 1.67 * 4.17 = 6.96 A
+        res_small = verify_nec_transformer_overcurrent_protection(
+            transformer_kva=1.0,
+            primary_voltage_v=240.0,
+            secondary_voltage_v=120.0,
+            primary_ocpd_a=6.0,
+            three_phase=False,
+        )
+        self.assertTrue(res_small["pass"])
+        self.assertAlmostEqual(res_small["max_allowed_primary_a"], 6.96, places=2)
+        self.assertLess(res_small["dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_nec_transformer_overcurrent_protection(
+            transformer_kva=float("nan"),
+            primary_voltage_v=480.0,
+            secondary_voltage_v=208.0,
+            primary_ocpd_a=70.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_transformer_overcurrent_protection(
+            transformer_kva=-45.0,
+            primary_voltage_v=480.0,
+            secondary_voltage_v=208.0,
+            primary_ocpd_a=70.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_rating_or_voltage")
+
+        res_neg_sec = verify_nec_transformer_overcurrent_protection(
+            transformer_kva=45.0,
+            primary_voltage_v=480.0,
+            secondary_voltage_v=208.0,
+            primary_ocpd_a=70.0,
+            secondary_ocpd_a=-10.0,
+        )
+        self.assertFalse(res_neg_sec["pass"])
+        self.assertEqual(res_neg_sec["reason"], "negative_secondary_ocpd")
 
 
 if __name__ == "__main__":
