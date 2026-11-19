@@ -1,0 +1,9 @@
+{
+  "score": 86.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_beam_torsion",
+    "rationale": "Implements ACI 318-19 Section 22.7 and Section 9.5/9.6/9.7 torsion code-gate checks for reinforced concrete beams, evaluating threshold torsion, cross-sectional shear-torsion crushing limits, closed stirrup demand, longitudinal steel demand, and spacing limits.",
+    "model": "gemini-3.8-flash"
+  }
+}

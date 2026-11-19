@@ -7419,3 +7419,198 @@ def verify_generator_motor_starting_voltage_dip(
         "running_kw_ok": running_kw_ok,
         "running_kva_ok": running_kva_ok,
     }
+
+
+def verify_aci_beam_torsion(
+    tu_kip_ft: float,
+    vu_kips: float,
+    b_in: float,
+    h_in: float,
+    d_in: float,
+    cover_in: float = 1.5,
+    stirrup_bar_dia_in: float = 0.50,
+    at_over_s_provided: float = 0.0,
+    av_over_s_provided: float = 0.0,
+    al_provided_in2: float = 0.0,
+    fc_psi: float = 4000.0,
+    fy_psi: float = 60000.0,
+    fyt_psi: float = 60000.0,
+    theta_deg: float = 45.0,
+    lambda_factor: float = 1.0,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 22.7 & 9.5.4/9.6.4/9.7.6 reinforced concrete beam torsion capacity, detailing, and combined shear check."""
+    scalars = [
+        tu_kip_ft,
+        vu_kips,
+        b_in,
+        h_in,
+        d_in,
+        cover_in,
+        stirrup_bar_dia_in,
+        at_over_s_provided,
+        av_over_s_provided,
+        al_provided_in2,
+        fc_psi,
+        fy_psi,
+        fyt_psi,
+        theta_deg,
+        lambda_factor,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if tu_kip_ft < 0 or vu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if at_over_s_provided < 0 or av_over_s_provided < 0 or al_provided_in2 < 0:
+        return {"pass": False, "reason": "negative_reinforcement_input"}
+    if cover_in < 0 or stirrup_bar_dia_in < 0:
+        return {"pass": False, "reason": "negative_cover_or_bar_diameter"}
+    if (
+        min(b_in, h_in, d_in, fc_psi, fy_psi, fyt_psi, lambda_factor, phi) <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if d_in >= h_in:
+        return {"pass": False, "reason": "effective_depth_exceeds_total_height"}
+    if not (30.0 <= theta_deg <= 60.0):
+        return {"pass": False, "reason": "invalid_crack_angle"}
+
+    # Cross-sectional gross geometry (Acp, pcp)
+    a_cp = b_in * h_in
+    p_cp = 2.0 * (b_in + h_in)
+    sqrt_fc = math.sqrt(fc_psi)
+
+    # Centerline dimensions of outermost closed transverse stirrup (Aoh, ph)
+    c_center = cover_in + stirrup_bar_dia_in / 2.0
+    x1 = b_in - 2.0 * c_center
+    y1 = h_in - 2.0 * c_center
+    if x1 <= 0.0 or y1 <= 0.0:
+        return {"pass": False, "reason": "cover_exceeds_section_dimensions"}
+
+    a_oh = x1 * y1
+    p_h = 2.0 * (x1 + y1)
+    a_o = 0.85 * a_oh
+
+    # ACI 318-19 Section 22.7.4.1 Threshold torsion Tth
+    t_th_lb_in = phi * lambda_factor * sqrt_fc * (a_cp**2 / p_cp)
+    t_th_kip_ft = t_th_lb_in / 12000.0
+    t_cr_kip_ft = 4.0 * t_th_kip_ft
+
+    # Torsion requirement evaluation
+    torsion_required = tu_kip_ft > t_th_kip_ft
+
+    # ACI 318-19 Section 22.7.7.1 Cross-sectional dimension adequacy (prevent concrete crushing)
+    v_u_lb = vu_kips * 1000.0
+    t_u_lb_in = tu_kip_ft * 12000.0
+    vc_lb = 2.0 * lambda_factor * sqrt_fc * b_in * d_in
+
+    shear_stress_psi = v_u_lb / (b_in * d_in)
+    torsion_stress_psi = (t_u_lb_in * p_h) / (1.7 * (a_oh**2))
+    section_stress_psi = math.sqrt(shear_stress_psi**2 + torsion_stress_psi**2)
+    section_stress_limit_psi = phi * ((vc_lb / (b_in * d_in)) + 8.0 * sqrt_fc)
+
+    cross_section_ok = section_stress_psi <= section_stress_limit_psi
+    cross_section_dcr = section_stress_psi / section_stress_limit_psi if section_stress_limit_psi > 0 else float("inf")
+
+    # Transverse reinforcement calculation
+    theta_rad = math.radians(theta_deg)
+    cot_theta = 1.0 / math.tan(theta_rad)
+
+    fyt_eff = min(fyt_psi, 60000.0)
+    fy_eff = min(fy_psi, 60000.0)
+
+    if torsion_required:
+        # ACI 318-19 Eq. 22.7.6.1a: At/s for one leg of closed stirrup
+        at_over_s_req = t_u_lb_in / (2.0 * phi * a_o * fyt_eff * cot_theta)
+    else:
+        at_over_s_req = 0.0
+
+    # Shear stirrup requirement Av/s (two legs)
+    phi_vc_lb = phi * vc_lb
+    if v_u_lb > 0.5 * phi_vc_lb:
+        vs_req_lb = max(0.0, (v_u_lb / phi) - vc_lb)
+        av_over_s_req = vs_req_lb / (fyt_eff * d_in)
+    else:
+        av_over_s_req = 0.0
+
+    # Total transverse reinforcement demand (Av + 2At)/s
+    total_transverse_req = av_over_s_req + 2.0 * at_over_s_req
+
+    # ACI 318-19 Section 9.6.4.2 Minimum transverse reinforcement
+    if torsion_required or (v_u_lb > 0.5 * phi_vc_lb):
+        min_transverse_req = max(
+            (0.75 * sqrt_fc * b_in) / fyt_eff,
+            (50.0 * b_in) / fyt_eff,
+        )
+    else:
+        min_transverse_req = 0.0
+
+    gov_transverse_req = max(total_transverse_req, min_transverse_req)
+
+    # Maximum transverse stirrup spacing (ACI 318-19 Table 9.7.6.3.3)
+    s_max_in = min(p_h / 8.0, 12.0) if torsion_required else min(d_in / 2.0, 24.0)
+
+    # Transverse reinforcement DCR
+    total_transverse_prov = av_over_s_provided + 2.0 * at_over_s_provided
+    if total_transverse_prov > 0.0:
+        transverse_dcr = gov_transverse_req / total_transverse_prov
+        transverse_ok = transverse_dcr <= 1.0
+    else:
+        transverse_dcr = 0.0 if gov_transverse_req == 0.0 else float("inf")
+        transverse_ok = gov_transverse_req == 0.0
+
+    # ACI 318-19 Section 9.5.4.3 Additional longitudinal reinforcement Al
+    if torsion_required:
+        al_calc_in2 = at_over_s_req * p_h * (fyt_eff / fy_eff) * (cot_theta**2)
+        at_over_s_min = max(at_over_s_req, 25.0 * b_in / fyt_eff)
+        al_min_in2 = max(
+            0.0,
+            ((5.0 * sqrt_fc * a_cp) / fy_eff) - at_over_s_min * p_h * (fyt_eff / fy_eff),
+        )
+        al_req_in2 = max(al_calc_in2, al_min_in2)
+    else:
+        al_req_in2 = 0.0
+
+    if al_provided_in2 > 0.0:
+        longitudinal_dcr = al_req_in2 / al_provided_in2
+        longitudinal_ok = longitudinal_dcr <= 1.0
+    else:
+        longitudinal_dcr = 0.0 if al_req_in2 == 0.0 else float("inf")
+        longitudinal_ok = al_req_in2 == 0.0
+
+    dcr_candidates = [cross_section_dcr]
+    if total_transverse_prov > 0.0:
+        dcr_candidates.append(transverse_dcr)
+    if al_provided_in2 > 0.0:
+        dcr_candidates.append(longitudinal_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = cross_section_ok and transverse_ok and longitudinal_ok
+
+    if not cross_section_ok:
+        gov_state = "concrete_crushing"
+    elif transverse_dcr >= max(longitudinal_dcr, cross_section_dcr):
+        gov_state = "transverse_torsion_shear"
+    elif longitudinal_dcr >= max(transverse_dcr, cross_section_dcr):
+        gov_state = "longitudinal_torsion"
+    else:
+        gov_state = "cross_section_adequacy"
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "torsion_required": torsion_required,
+        "cross_section_ok": cross_section_ok,
+        "cross_section_dcr": round(cross_section_dcr, 4),
+        "t_th_kip_ft": round(t_th_kip_ft, 2),
+        "t_cr_kip_ft": round(t_cr_kip_ft, 2),
+        "section_stress_psi": round(section_stress_psi, 1),
+        "section_stress_limit_psi": round(section_stress_limit_psi, 1),
+        "at_over_s_req": round(at_over_s_req, 5),
+        "total_transverse_req": round(gov_transverse_req, 5),
+        "al_req_in2": round(al_req_in2, 3),
+        "s_max_in": round(s_max_in, 2),
+        "governing_limit_state": gov_state,
+        "transverse_ok": transverse_ok,
+        "longitudinal_ok": longitudinal_ok,
+    }

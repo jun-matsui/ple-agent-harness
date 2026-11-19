@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_beam_torsion,
     verify_generator_motor_starting_voltage_dip,
     verify_ieee1584_arc_flash_hazard,
     verify_aci_prestressed_concrete_stresses,
@@ -7317,6 +7318,126 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_no_motor["pass"])
         self.assertEqual(res_no_motor["reason"], "missing_motor_starting_input")
+
+
+    def test_aci_beam_torsion(self) -> None:
+        from harness.verifiers import verify_aci_beam_torsion
+
+        # Standard passing concrete beam under combined shear and torsion
+        # b=14 in, h=24 in, d=21.5 in, Tu=20 kip-ft, Vu=35 kips
+        # Provided #4 stirrups (At/s=0.20/6=0.0333 in2/in, Av/s=0.40/6=0.0667 in2/in) and Al=1.5 in2
+        res_pass = verify_aci_beam_torsion(
+            tu_kip_ft=20.0,
+            vu_kips=35.0,
+            b_in=14.0,
+            h_in=24.0,
+            d_in=21.5,
+            cover_in=1.5,
+            stirrup_bar_dia_in=0.50,
+            at_over_s_provided=0.020,
+            av_over_s_provided=0.040,
+            al_provided_in2=1.50,
+            fc_psi=4000.0,
+            fy_psi=60000.0,
+            fyt_psi=60000.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertTrue(res_pass["torsion_required"])
+        self.assertTrue(res_pass["cross_section_ok"])
+        self.assertAlmostEqual(res_pass["t_th_kip_ft"], 5.87, places=1)
+        self.assertAlmostEqual(res_pass["t_cr_kip_ft"], 23.49, places=1)
+        self.assertAlmostEqual(res_pass["s_max_in"], 7.75, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["transverse_ok"])
+        self.assertTrue(res_pass["longitudinal_ok"])
+
+        # Negligible torsion condition (Tu <= Tth) where torsion detailing is exempt
+        res_negligible = verify_aci_beam_torsion(
+            tu_kip_ft=4.0,
+            vu_kips=20.0,
+            b_in=14.0,
+            h_in=24.0,
+            d_in=21.5,
+            av_over_s_provided=0.030,
+        )
+        self.assertTrue(res_negligible["pass"])
+        self.assertFalse(res_negligible["torsion_required"])
+        self.assertEqual(res_negligible["at_over_s_req"], 0.0)
+        self.assertEqual(res_negligible["al_req_in2"], 0.0)
+
+        # Cross-sectional crushing limit failure (section dimensions too small for combined V+T)
+        res_crush = verify_aci_beam_torsion(
+            tu_kip_ft=80.0,
+            vu_kips=120.0,
+            b_in=12.0,
+            h_in=18.0,
+            d_in=15.5,
+            at_over_s_provided=0.10,
+            al_provided_in2=5.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_crush["pass"])
+        self.assertFalse(res_crush["cross_section_ok"])
+        self.assertEqual(res_crush["governing_limit_state"], "concrete_crushing")
+        self.assertGreater(res_crush["cross_section_dcr"], 1.0)
+
+        # Insufficient longitudinal reinforcement failure
+        res_fail_long = verify_aci_beam_torsion(
+            tu_kip_ft=20.0,
+            vu_kips=35.0,
+            b_in=14.0,
+            h_in=24.0,
+            d_in=21.5,
+            at_over_s_provided=0.030,
+            av_over_s_provided=0.030,
+            al_provided_in2=0.50,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_fail_long["pass"])
+        self.assertFalse(res_fail_long["longitudinal_ok"])
+        self.assertGreater(res_fail_long["dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_aci_beam_torsion(
+            tu_kip_ft=float("nan"),
+            vu_kips=35.0,
+            b_in=14.0,
+            h_in=24.0,
+            d_in=21.5,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_beam_torsion(
+            tu_kip_ft=-10.0,
+            vu_kips=35.0,
+            b_in=14.0,
+            h_in=24.0,
+            d_in=21.5,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_depth_err = verify_aci_beam_torsion(
+            tu_kip_ft=10.0,
+            vu_kips=10.0,
+            b_in=14.0,
+            h_in=20.0,
+            d_in=22.0,
+        )
+        self.assertFalse(res_depth_err["pass"])
+        self.assertEqual(res_depth_err["reason"], "effective_depth_exceeds_total_height")
+
+        res_cover_err = verify_aci_beam_torsion(
+            tu_kip_ft=10.0,
+            vu_kips=10.0,
+            b_in=10.0,
+            h_in=20.0,
+            d_in=17.0,
+            cover_in=6.0,
+        )
+        self.assertFalse(res_cover_err["pass"])
+        self.assertEqual(res_cover_err["reason"], "cover_exceeds_section_dimensions")
 
 
 if __name__ == "__main__":
