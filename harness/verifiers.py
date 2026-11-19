@@ -6659,3 +6659,159 @@ def verify_aisc_panel_zone_shear(
         "doubler_required": doubler_required,
         "min_doubler_thickness_in": round(min_doubler_thickness_in, 3) if doubler_required else None,
     }
+
+
+def verify_nds_timber_beam_flexure_and_shear(
+    m_max_kip_ft: float,
+    v_max_kips: float,
+    b_in: float,
+    d_in: float,
+    fb_psi: float,
+    fv_psi: float,
+    e_min_psi: float = 580000.0,
+    e_modulus_psi: float = 1600000.0,
+    unbraced_length_ft: float = 0.0,
+    span_ft: float = 0.0,
+    w_live_plf: float = 0.0,
+    cd_duration: float = 1.0,
+    cm_moisture: float = 1.0,
+    ct_temp: float = 1.0,
+    cf_size: float = 1.0,
+    cr_repetitive: float = 1.0,
+    deflection_limit_ratio: float = 360.0,
+) -> Dict[str, Any]:
+    """NDS 2018 Section 3.3 & 3.4 ASD timber beam flexural bending, shear, lateral stability (CL), and deflection check."""
+    scalars = [
+        m_max_kip_ft,
+        v_max_kips,
+        b_in,
+        d_in,
+        fb_psi,
+        fv_psi,
+        e_min_psi,
+        e_modulus_psi,
+        unbraced_length_ft,
+        span_ft,
+        w_live_plf,
+        cd_duration,
+        cm_moisture,
+        ct_temp,
+        cf_size,
+        cr_repetitive,
+        deflection_limit_ratio,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if m_max_kip_ft < 0 or v_max_kips < 0 or w_live_plf < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if unbraced_length_ft < 0 or span_ft < 0:
+        return {"pass": False, "reason": "negative_geometry_input"}
+    if (
+        min(
+            b_in,
+            d_in,
+            fb_psi,
+            fv_psi,
+            e_min_psi,
+            e_modulus_psi,
+            cd_duration,
+            cm_moisture,
+            ct_temp,
+            cf_size,
+            cr_repetitive,
+            deflection_limit_ratio,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+
+    # Actual rectangular cross-section properties
+    area_in2 = b_in * d_in
+    sx_in3 = (b_in * (d_in**2)) / 6.0
+    ix_in4 = (b_in * (d_in**3)) / 12.0
+
+    # Actual flexural and shear stresses
+    m_lb_in = m_max_kip_ft * 12000.0
+    fb_actual_psi = m_lb_in / sx_in3 if sx_in3 > 0 else float("inf")
+
+    v_lb = v_max_kips * 1000.0
+    fv_actual_psi = (1.5 * v_lb) / area_in2 if area_in2 > 0 else float("inf")
+
+    # Reference design values adjusted by base modifiers (prior to CL)
+    fb_star_psi = fb_psi * cd_duration * cm_moisture * ct_temp * cf_size * cr_repetitive
+    emin_prime_psi = e_min_psi * cm_moisture * ct_temp
+
+    # NDS 2018 Section 3.3.3 Beam Stability Factor (C_L)
+    if unbraced_length_ft <= 0.0:
+        cl = 1.0
+        rb = 0.0
+    else:
+        lu_in = unbraced_length_ft * 12.0
+        lu_over_d = lu_in / d_in
+        if lu_over_d < 14.3:
+            le_in = 2.06 * lu_in
+        else:
+            le_in = 1.63 * lu_in + 3.0 * d_in
+
+        rb = math.sqrt((le_in * d_in) / (b_in**2))
+        if rb > 50.0:
+            return {
+                "pass": False,
+                "reason": "slenderness_rb_exceeds_50",
+                "slenderness_rb": round(rb, 2),
+            }
+
+        # Critical buckling design value for bending
+        fbe_psi = (1.20 * emin_prime_psi) / (rb**2)
+        alpha = fbe_psi / fb_star_psi if fb_star_psi > 0 else 0.0
+        term1 = (1.0 + alpha) / 1.9
+        inside_sqrt = max((term1**2) - (alpha / 0.95), 0.0)
+        cl = max(0.0, min(1.0, term1 - math.sqrt(inside_sqrt)))
+
+    fb_prime_psi = fb_star_psi * cl
+    flex_dcr = fb_actual_psi / fb_prime_psi if fb_prime_psi > 0 else float("inf")
+    flex_ok = flex_dcr <= 1.0
+
+    # NDS 2018 Section 3.4.2 adjusted shear design value F'v
+    fv_prime_psi = fv_psi * cd_duration * cm_moisture * ct_temp
+    shear_dcr = fv_actual_psi / fv_prime_psi if fv_prime_psi > 0 else float("inf")
+    shear_ok = shear_dcr <= 1.0
+
+    # Optional live load deflection check
+    defl_dcr = None
+    defl_ok = True
+    delta_live_in = None
+    allowable_defl_in = None
+    if span_ft > 0.0 and w_live_plf > 0.0:
+        l_in = span_ft * 12.0
+        w_live_in = w_live_plf / 12.0
+        e_prime_psi = e_modulus_psi * cm_moisture * ct_temp
+        delta_live_in = (5.0 * w_live_in * (l_in**4)) / (384.0 * e_prime_psi * ix_in4)
+        allowable_defl_in = l_in / deflection_limit_ratio
+        defl_dcr = delta_live_in / allowable_defl_in if allowable_defl_in > 0 else float("inf")
+        defl_ok = defl_dcr <= 1.0
+
+    dcr_candidates = [flex_dcr, shear_dcr]
+    if defl_dcr is not None:
+        dcr_candidates.append(defl_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = flex_ok and shear_ok and defl_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "flex_dcr": round(flex_dcr, 4),
+        "shear_dcr": round(shear_dcr, 4),
+        "defl_dcr": round(defl_dcr, 4) if defl_dcr is not None else None,
+        "fb_actual_psi": round(fb_actual_psi, 1),
+        "fb_prime_psi": round(fb_prime_psi, 1),
+        "fv_actual_psi": round(fv_actual_psi, 1),
+        "fv_prime_psi": round(fv_prime_psi, 1),
+        "cl_factor": round(cl, 4),
+        "slenderness_rb": round(rb, 2),
+        "delta_live_in": round(delta_live_in, 4) if delta_live_in is not None else None,
+        "allowable_defl_in": round(allowable_defl_in, 4) if allowable_defl_in is not None else None,
+        "flex_ok": flex_ok,
+        "shear_ok": shear_ok,
+        "defl_ok": defl_ok,
+    }

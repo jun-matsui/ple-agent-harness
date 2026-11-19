@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nds_timber_beam_flexure_and_shear,
     verify_aisc_panel_zone_shear,
     verify_nec_feeder_tap_rules,
     verify_aci_concrete_shear_wall,
@@ -6620,6 +6621,141 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_no_demand["pass"])
         self.assertEqual(res_no_demand["reason"], "zero_shear_demand")
+
+
+    def test_nds_timber_beam_flexure_and_shear(self) -> None:
+        from harness.verifiers import verify_nds_timber_beam_flexure_and_shear
+
+        # Standard passing 4x12 sawn lumber timber beam (actual b=3.5 in, d=11.25 in)
+        res_pass = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=5.0,
+            v_max_kips=3.0,
+            b_in=3.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+            cf_size=1.1,
+            unbraced_length_ft=0.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["cl_factor"], 1.0)
+        self.assertAlmostEqual(res_pass["fb_actual_psi"], 812.7, places=1)
+        self.assertAlmostEqual(res_pass["fb_prime_psi"], 1100.0, places=1)
+        self.assertAlmostEqual(res_pass["fv_actual_psi"], 114.3, places=1)
+        self.assertAlmostEqual(res_pass["fv_prime_psi"], 180.0, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["flex_ok"])
+        self.assertTrue(res_pass["shear_ok"])
+
+        # Intermediate unbraced length engaging NDS beam stability factor C_L
+        res_unbraced = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=5.0,
+            v_max_kips=3.0,
+            b_in=3.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+            cf_size=1.1,
+            unbraced_length_ft=10.0,
+            e_min_psi=580000.0,
+        )
+        self.assertTrue(res_unbraced["pass"])
+        self.assertLess(res_unbraced["cl_factor"], 1.0)
+        self.assertAlmostEqual(res_unbraced["slenderness_rb"], 15.07, places=2)
+        self.assertAlmostEqual(res_unbraced["cl_factor"], 0.9738, places=3)
+        self.assertLess(res_unbraced["fb_prime_psi"], res_pass["fb_prime_psi"])
+
+        # Slenderness exceeding code maximum allowable (r_b > 50)
+        res_slender_fail = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=2.0,
+            v_max_kips=1.0,
+            b_in=1.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+            unbraced_length_ft=50.0,
+        )
+        self.assertFalse(res_slender_fail["pass"])
+        self.assertEqual(res_slender_fail["reason"], "slenderness_rb_exceeds_50")
+        self.assertGreater(res_slender_fail["slenderness_rb"], 50.0)
+
+        # Bending moment overload failure
+        res_fail_flex = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=10.0,
+            v_max_kips=3.0,
+            b_in=3.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+            cf_size=1.1,
+        )
+        self.assertFalse(res_fail_flex["pass"])
+        self.assertFalse(res_fail_flex["flex_ok"])
+        self.assertGreater(res_fail_flex["flex_dcr"], 1.0)
+
+        # Shear force overload failure
+        res_fail_shear = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=5.0,
+            v_max_kips=6.0,
+            b_in=3.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+            cf_size=1.1,
+        )
+        self.assertFalse(res_fail_shear["pass"])
+        self.assertFalse(res_fail_shear["shear_ok"])
+        self.assertGreater(res_fail_shear["shear_dcr"], 1.0)
+
+        # Live load deflection limit failure
+        res_fail_defl = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=5.0,
+            v_max_kips=3.0,
+            b_in=3.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+            span_ft=16.0,
+            w_live_plf=300.0,
+            deflection_limit_ratio=360.0,
+        )
+        self.assertFalse(res_fail_defl["pass"])
+        self.assertFalse(res_fail_defl["defl_ok"])
+        self.assertGreater(res_fail_defl["defl_dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=float("nan"),
+            v_max_kips=3.0,
+            b_in=3.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=-5.0,
+            v_max_kips=3.0,
+            b_in=3.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_neg_geom = verify_nds_timber_beam_flexure_and_shear(
+            m_max_kip_ft=5.0,
+            v_max_kips=3.0,
+            b_in=-3.5,
+            d_in=11.25,
+            fb_psi=1000.0,
+            fv_psi=180.0,
+        )
+        self.assertFalse(res_neg_geom["pass"])
+        self.assertEqual(res_neg_geom["reason"], "non_positive_geometry_or_material")
 
 
 if __name__ == "__main__":
