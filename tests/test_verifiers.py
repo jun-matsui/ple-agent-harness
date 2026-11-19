@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_pv_system_string_sizing,
     verify_power_factor_correction_capacitor,
     verify_aci_beam_torsion,
     verify_generator_motor_starting_voltage_dip,
@@ -7575,6 +7576,141 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_pf_bounds["pass"])
         self.assertEqual(res_pf_bounds["reason"], "power_factor_out_of_bounds")
+
+
+    def test_nec_pv_system_string_sizing(self) -> None:
+        from harness.verifiers import verify_nec_pv_system_string_sizing
+
+        # Standard passing 18-module string on a 1000V commercial three-phase inverter
+        # Module: Voc=49.5V, Vmp=41.2V, Isc=10.5A
+        # Cold (-10C): Voc_module = 49.5 * (1 + 0.0028 * 35) = 54.351V -> V_string = 978.32V <= 1000V
+        # Hot (+40C amb + 30C rise = 70C): Vmp_module = 41.2 * (1 - 0.0035 * 45) = 34.711V -> V_string = 624.8V >= 500V
+        res_pass = verify_nec_pv_system_string_sizing(
+            modules_per_string=18,
+            v_oc_stc_v=49.5,
+            v_mp_stc_v=41.2,
+            i_sc_stc_a=10.5,
+            inverter_max_dc_voltage_v=1000.0,
+            inverter_mppt_min_v=500.0,
+            inverter_mppt_max_v=850.0,
+            min_ambient_temp_c=-10.0,
+            max_ambient_temp_c=40.0,
+            cell_temp_rise_c=30.0,
+            inverter_max_isc_a=15.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["v_max_cold_string_v"], 978.32, places=1)
+        self.assertAlmostEqual(res_pass["v_min_hot_string_v"], 624.80, places=1)
+        self.assertAlmostEqual(res_pass["i_max_circuit_a"], 13.12, places=1)
+        self.assertEqual(res_pass["max_modules_allowed"], 18)
+        self.assertEqual(res_pass["min_modules_allowed"], 15)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["voc_ok"])
+        self.assertTrue(res_pass["mppt_min_ok"])
+        self.assertTrue(res_pass["mppt_max_ok"])
+        self.assertTrue(res_pass["isc_ok"])
+
+        # Coldest open-circuit voltage failure (20 modules exceeds 1000V limit)
+        res_voc_fail = verify_nec_pv_system_string_sizing(
+            modules_per_string=20,
+            v_oc_stc_v=49.5,
+            v_mp_stc_v=41.2,
+            i_sc_stc_a=10.5,
+            inverter_max_dc_voltage_v=1000.0,
+            inverter_mppt_min_v=500.0,
+            inverter_mppt_max_v=850.0,
+            min_ambient_temp_c=-10.0,
+        )
+        self.assertFalse(res_voc_fail["pass"])
+        self.assertFalse(res_voc_fail["voc_ok"])
+        self.assertGreater(res_voc_fail["voc_dcr"], 1.0)
+        self.assertGreater(res_voc_fail["v_max_cold_string_v"], 1000.0)
+
+        # Minimum MPPT tracking voltage failure (12 modules drops below 500V in hot weather)
+        res_mppt_fail = verify_nec_pv_system_string_sizing(
+            modules_per_string=12,
+            v_oc_stc_v=49.5,
+            v_mp_stc_v=41.2,
+            i_sc_stc_a=10.5,
+            inverter_max_dc_voltage_v=1000.0,
+            inverter_mppt_min_v=500.0,
+            inverter_mppt_max_v=850.0,
+            min_ambient_temp_c=-10.0,
+            max_ambient_temp_c=40.0,
+            cell_temp_rise_c=30.0,
+        )
+        self.assertFalse(res_mppt_fail["pass"])
+        self.assertFalse(res_mppt_fail["mppt_min_ok"])
+        self.assertGreater(res_mppt_fail["mppt_min_dcr"], 1.0)
+        self.assertLess(res_mppt_fail["v_min_hot_string_v"], 500.0)
+
+        # Short-circuit current exceeding inverter rating failure
+        res_isc_fail = verify_nec_pv_system_string_sizing(
+            modules_per_string=16,
+            v_oc_stc_v=49.5,
+            v_mp_stc_v=41.2,
+            i_sc_stc_a=14.0,
+            inverter_max_dc_voltage_v=1000.0,
+            inverter_mppt_min_v=500.0,
+            inverter_mppt_max_v=850.0,
+            inverter_max_isc_a=15.0,
+        )
+        self.assertFalse(res_isc_fail["pass"])
+        self.assertFalse(res_isc_fail["isc_ok"])
+        self.assertGreater(res_isc_fail["i_max_circuit_a"], 15.0)
+
+        # Electrical parameter error: Vmp exceeds Voc
+        res_param_err = verify_nec_pv_system_string_sizing(
+            modules_per_string=16,
+            v_oc_stc_v=40.0,
+            v_mp_stc_v=45.0,
+            i_sc_stc_a=10.0,
+            inverter_max_dc_voltage_v=1000.0,
+            inverter_mppt_min_v=400.0,
+            inverter_mppt_max_v=800.0,
+        )
+        self.assertFalse(res_param_err["pass"])
+        self.assertEqual(res_param_err["reason"], "vmp_exceeds_voc")
+
+        # Temperature inversion error: min temp >= max temp
+        res_temp_err = verify_nec_pv_system_string_sizing(
+            modules_per_string=16,
+            v_oc_stc_v=49.5,
+            v_mp_stc_v=41.2,
+            i_sc_stc_a=10.0,
+            inverter_max_dc_voltage_v=1000.0,
+            inverter_mppt_min_v=400.0,
+            inverter_mppt_max_v=800.0,
+            min_ambient_temp_c=45.0,
+            max_ambient_temp_c=30.0,
+        )
+        self.assertFalse(res_temp_err["pass"])
+        self.assertEqual(res_temp_err["reason"], "min_temp_not_below_max_temp")
+
+        # Input error validation checks
+        res_nan = verify_nec_pv_system_string_sizing(
+            modules_per_string=16,
+            v_oc_stc_v=float("nan"),
+            v_mp_stc_v=41.2,
+            i_sc_stc_a=10.0,
+            inverter_max_dc_voltage_v=1000.0,
+            inverter_mppt_min_v=400.0,
+            inverter_mppt_max_v=800.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_pv_system_string_sizing(
+            modules_per_string=0,
+            v_oc_stc_v=49.5,
+            v_mp_stc_v=41.2,
+            i_sc_stc_a=10.0,
+            inverter_max_dc_voltage_v=1000.0,
+            inverter_mppt_min_v=400.0,
+            inverter_mppt_max_v=800.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "invalid_module_count")
 
 
 if __name__ == "__main__":

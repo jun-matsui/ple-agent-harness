@@ -7739,3 +7739,131 @@ def verify_power_factor_correction_capacitor(
         "conductor_ok": conductor_ok,
         "voltage_rise_ok": voltage_rise_ok,
     }
+
+
+def verify_nec_pv_system_string_sizing(
+    modules_per_string: int,
+    v_oc_stc_v: float,
+    v_mp_stc_v: float,
+    i_sc_stc_a: float,
+    inverter_max_dc_voltage_v: float,
+    inverter_mppt_min_v: float,
+    inverter_mppt_max_v: float,
+    min_ambient_temp_c: float = -10.0,
+    max_ambient_temp_c: float = 40.0,
+    cell_temp_rise_c: float = 30.0,
+    temp_coeff_voc_pct_per_c: float = -0.28,
+    temp_coeff_vmp_pct_per_c: float = -0.35,
+    inverter_max_isc_a: float = 0.0,
+    nec_current_multiplier: float = 1.25,
+) -> Dict[str, Any]:
+    """NEC 690.7 & 690.8 PV module string voltage limits, MPPT window, and inverter current gate."""
+    scalars = [
+        float(modules_per_string),
+        v_oc_stc_v,
+        v_mp_stc_v,
+        i_sc_stc_a,
+        inverter_max_dc_voltage_v,
+        inverter_mppt_min_v,
+        inverter_mppt_max_v,
+        min_ambient_temp_c,
+        max_ambient_temp_c,
+        cell_temp_rise_c,
+        temp_coeff_voc_pct_per_c,
+        temp_coeff_vmp_pct_per_c,
+        inverter_max_isc_a,
+        nec_current_multiplier,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if modules_per_string < 1:
+        return {"pass": False, "reason": "invalid_module_count"}
+    if (
+        min(
+            v_oc_stc_v,
+            v_mp_stc_v,
+            i_sc_stc_a,
+            inverter_max_dc_voltage_v,
+            inverter_mppt_min_v,
+            inverter_mppt_max_v,
+            nec_current_multiplier,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_electrical_parameter"}
+    if v_mp_stc_v >= v_oc_stc_v:
+        return {"pass": False, "reason": "vmp_exceeds_voc"}
+    if inverter_mppt_min_v >= inverter_mppt_max_v:
+        return {"pass": False, "reason": "invalid_mppt_range"}
+    if inverter_mppt_max_v > inverter_max_dc_voltage_v:
+        return {"pass": False, "reason": "mppt_max_exceeds_inverter_max_voltage"}
+    if min_ambient_temp_c >= max_ambient_temp_c:
+        return {"pass": False, "reason": "min_temp_not_below_max_temp"}
+    if cell_temp_rise_c < 0:
+        return {"pass": False, "reason": "negative_cell_temp_rise"}
+    if inverter_max_isc_a < 0:
+        return {"pass": False, "reason": "negative_inverter_current_rating"}
+
+    # Enforce negative sign convention for temperature coefficients
+    beta_voc = -abs(temp_coeff_voc_pct_per_c) / 100.0
+    gamma_vmp = -abs(temp_coeff_vmp_pct_per_c) / 100.0
+
+    # 1. Coldest Ambient Open-Circuit Voltage Check (NEC 690.7(A))
+    delta_t_cold = min_ambient_temp_c - 25.0
+    v_oc_cold_module = v_oc_stc_v * (1.0 + beta_voc * delta_t_cold)
+    v_max_cold_string = modules_per_string * v_oc_cold_module
+
+    voc_dcr = v_max_cold_string / inverter_max_dc_voltage_v
+    voc_ok = voc_dcr <= 1.0
+
+    # 2. Maximum Operating Cell Temperature Vmp Check (Inverter MPPT lower bound)
+    t_cell_hot = max_ambient_temp_c + cell_temp_rise_c
+    delta_t_hot = t_cell_hot - 25.0
+    v_mp_hot_module = v_mp_stc_v * (1.0 + gamma_vmp * delta_t_hot)
+    v_min_hot_string = modules_per_string * v_mp_hot_module
+
+    mppt_min_dcr = inverter_mppt_min_v / v_min_hot_string if v_min_hot_string > 0 else float("inf")
+    mppt_min_ok = mppt_min_dcr <= 1.0
+
+    # 3. Cold Operating Vmp Check (Inverter MPPT upper bound)
+    v_mp_cold_module = v_mp_stc_v * (1.0 + gamma_vmp * delta_t_cold)
+    v_max_mppt_string = modules_per_string * v_mp_cold_module
+
+    mppt_max_dcr = v_max_mppt_string / inverter_mppt_max_v
+    mppt_max_ok = mppt_max_dcr <= 1.0
+
+    # 4. Maximum Circuit Short-Circuit Current Check (NEC 690.8(A)(1))
+    i_max_circuit_a = i_sc_stc_a * nec_current_multiplier
+    isc_ok = True
+    isc_dcr = None
+    if inverter_max_isc_a > 0.0:
+        isc_dcr = i_max_circuit_a / inverter_max_isc_a
+        isc_ok = isc_dcr <= 1.0
+
+    # Optimal theoretical series string boundaries
+    max_modules_allowed = int(math.floor(inverter_max_dc_voltage_v / v_oc_cold_module))
+    min_modules_allowed = int(math.ceil(inverter_mppt_min_v / v_mp_hot_module))
+
+    dcr_candidates = [voc_dcr, mppt_min_dcr, mppt_max_dcr]
+    if isc_dcr is not None:
+        dcr_candidates.append(isc_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = voc_ok and mppt_min_ok and mppt_max_ok and isc_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "voc_dcr": round(voc_dcr, 4),
+        "mppt_min_dcr": round(mppt_min_dcr, 4),
+        "mppt_max_dcr": round(mppt_max_dcr, 4),
+        "v_max_cold_string_v": round(v_max_cold_string, 2),
+        "v_min_hot_string_v": round(v_min_hot_string, 2),
+        "v_max_mppt_string_v": round(v_max_mppt_string, 2),
+        "i_max_circuit_a": round(i_max_circuit_a, 2),
+        "max_modules_allowed": max_modules_allowed,
+        "min_modules_allowed": min_modules_allowed,
+        "voc_ok": voc_ok,
+        "mppt_min_ok": mppt_min_ok,
+        "mppt_max_ok": mppt_max_ok,
+        "isc_ok": isc_ok,
+    }

@@ -1,0 +1,9 @@
+{
+  "score": 88.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_pv_system_string_sizing",
+    "rationale": "Applies NEC 690.7, NEC 690.8, and inverter MPPT voltage window constraints to verify photovoltaic series string sizing, extreme-cold open-circuit voltage limits, maximum operating cell temperature Vmp tracking, and short-circuit current ratings.",
+    "model": "gemini-3.8-flash"
+  }
+}
