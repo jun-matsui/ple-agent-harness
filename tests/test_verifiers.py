@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nds_timber_column_compression,
     verify_ashrae15_machinery_room_safety,
     verify_nec_pv_system_string_sizing,
     verify_power_factor_correction_capacitor,
@@ -7818,6 +7819,109 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_ref["pass"])
         self.assertEqual(res_inv_ref["reason"], "unknown_refrigerant_type")
+
+
+    def test_nds_timber_column_compression(self) -> None:
+        from harness.verifiers import verify_nds_timber_column_compression
+
+        # Standard passing 6x6 sawn lumber column (b=5.5 in, d=5.5 in, L=10 ft, P=18 kips)
+        res_pass = verify_nds_timber_column_compression(
+            p_axial_lbs=18000.0,
+            b_in=5.5,
+            d_in=5.5,
+            unbraced_length_x_ft=10.0,
+            unbraced_length_y_ft=10.0,
+            fc_psi=1350.0,
+            e_min_psi=580000.0,
+            c_parameter=0.8,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["slenderness"], 120.0 / 5.5, places=2)
+        self.assertAlmostEqual(res_pass["fce_psi"], 1001.53, places=1)
+        self.assertAlmostEqual(res_pass["cp_factor"], 0.5809, places=3)
+        self.assertAlmostEqual(res_pass["fc_prime_psi"], 784.17, places=1)
+        self.assertAlmostEqual(res_pass["p_allowable_lbs"], 23721.2, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 18000.0 / 23721.2, places=3)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["capacity_ok"])
+        self.assertTrue(res_pass["slenderness_ok"])
+
+        # Glued-laminated timber column check (c=0.9)
+        res_glulam = verify_nds_timber_column_compression(
+            p_axial_lbs=35000.0,
+            b_in=6.75,
+            d_in=6.75,
+            unbraced_length_x_ft=12.0,
+            unbraced_length_y_ft=12.0,
+            fc_psi=1900.0,
+            e_min_psi=850000.0,
+            c_parameter=0.9,
+        )
+        self.assertTrue(res_glulam["pass"])
+        self.assertGreater(res_glulam["cp_factor"], 0.60)
+        self.assertLess(res_glulam["dcr"], 1.0)
+
+        # Axial load exceeding allowable capacity failure (DCR > 1.0)
+        res_fail_load = verify_nds_timber_column_compression(
+            p_axial_lbs=30000.0,
+            b_in=5.5,
+            d_in=5.5,
+            unbraced_length_x_ft=10.0,
+            unbraced_length_y_ft=10.0,
+            fc_psi=1350.0,
+        )
+        self.assertFalse(res_fail_load["pass"])
+        self.assertFalse(res_fail_load["capacity_ok"])
+        self.assertGreater(res_fail_load["dcr luxuries", "dcr"] if "dcr luxuries" in res_fail_load else res_fail_load["dcr"], 1.0)
+
+        # Slenderness exceeding code maximum allowable (le/d > 50)
+        res_slender_fail = verify_nds_timber_column_compression(
+            p_axial_lbs=5000.0,
+            b_in=5.5,
+            d_in=5.5,
+            unbraced_length_x_ft=25.0,
+            unbraced_length_y_ft=25.0,
+            fc_psi=1350.0,
+            max_slenderness=50.0,
+        )
+        self.assertFalse(res_slender_fail["pass"])
+        self.assertFalse(res_slender_fail["slenderness_ok"])
+        self.assertGreater(res_slender_fail["slenderness"], 50.0)
+
+        # Input error validation checks
+        res_nan = verify_nds_timber_column_compression(
+            p_axial_lbs=float("nan"),
+            b_in=5.5,
+            d_in=5.5,
+            unbraced_length_x_ft=10.0,
+            unbraced_length_y_ft=10.0,
+            fc_psi=1350.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nds_timber_column_compression(
+            p_axial_lbs=-5000.0,
+            b_in=5.5,
+            d_in=5.5,
+            unbraced_length_x_ft=10.0,
+            unbraced_length_y_ft=10.0,
+            fc_psi=1350.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_inv_c = verify_nds_timber_column_compression(
+            p_axial_lbs=10000.0,
+            b_in=5.5,
+            d_in=5.5,
+            unbraced_length_x_ft=10.0,
+            unbraced_length_y_ft=10.0,
+            fc_psi=1350.0,
+            c_parameter=0.4,
+        )
+        self.assertFalse(res_inv_c["pass"])
+        self.assertEqual(res_inv_c["reason"], "invalid_c_parameter")
 
 
 if __name__ == "__main__":

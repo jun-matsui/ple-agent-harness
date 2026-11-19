@@ -7995,3 +7995,112 @@ def verify_ashrae15_machinery_room_safety(
         "normal_vent_ok": normal_ok,
         "detector_ok": detector_ok,
     }
+
+
+def verify_nds_timber_column_compression(
+    p_axial_lbs: float,
+    b_in: float,
+    d_in: float,
+    unbraced_length_x_ft: float,
+    unbraced_length_y_ft: float,
+    fc_psi: float,
+    e_min_psi: float = 580000.0,
+    ke_x: float = 1.0,
+    ke_y: float = 1.0,
+    cd_duration: float = 1.0,
+    cm_moisture: float = 1.0,
+    ct_temp: float = 1.0,
+    cf_size: float = 1.0,
+    c_parameter: float = 0.8,
+    max_slenderness: float = 50.0,
+) -> Dict[str, Any]:
+    """NDS 2018 Section 3.6 & 3.7 ASD timber column axial compression and stability factor (Cp) check."""
+    scalars = [
+        p_axial_lbs,
+        b_in,
+        d_in,
+        unbraced_length_x_ft,
+        unbraced_length_y_ft,
+        fc_psi,
+        e_min_psi,
+        ke_x,
+        ke_y,
+        cd_duration,
+        cm_moisture,
+        ct_temp,
+        cf_size,
+        c_parameter,
+        max_slenderness,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if p_axial_lbs < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(
+            b_in,
+            d_in,
+            unbraced_length_x_ft,
+            unbraced_length_y_ft,
+            fc_psi,
+            e_min_psi,
+            ke_x,
+            ke_y,
+            cd_duration,
+            cm_moisture,
+            ct_temp,
+            cf_size,
+            max_slenderness,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if not (0.60 <= c_parameter <= 1.0):
+        return {"pass": False, "reason": "invalid_c_parameter"}
+
+    # Effective unbraced lengths and slenderness ratios about both principal axes
+    le_x_in = ke_x * unbraced_length_x_ft * 12.0
+    le_y_in = ke_y * unbraced_length_y_ft * 12.0
+    slenderness_x = le_x_in / d_in
+    slenderness_y = le_y_in / b_in
+    slenderness = max(slenderness_x, slenderness_y)
+
+    # Cross-sectional area and actual compressive stress parallel to grain
+    area_in2 = b_in * d_in
+    fc_actual_psi = p_axial_lbs / area_in2 if area_in2 > 0 else float("inf")
+
+    # Adjusted reference design values prior to Cp (NDS Section 3.6.3 & 3.7.1)
+    fc_star_psi = fc_psi * cd_duration * cm_moisture * ct_temp * cf_size
+    emin_prime_psi = e_min_psi * cm_moisture * ct_temp
+
+    # Critical column buckling design value FcE (NDS Eq. 3.7-2)
+    fce_psi = (0.822 * emin_prime_psi) / (slenderness**2)
+
+    # Column Stability Factor Cp (NDS Eq. 3.7-1)
+    alpha_c = fce_psi / fc_star_psi if fc_star_psi > 0 else 0.0
+    term1 = (1.0 + alpha_c) / (2.0 * c_parameter)
+    inside_sqrt = max((term1**2) - (alpha_c / c_parameter), 0.0)
+    cp = max(0.0, min(1.0, term1 - math.sqrt(inside_sqrt)))
+
+    # Allowable adjusted compressive design stress and allowable load
+    fc_prime_psi = fc_star_psi * cp
+    p_allowable_lbs = fc_prime_psi * area_in2
+
+    dcr = p_axial_lbs / p_allowable_lbs if p_allowable_lbs > 0 else float("inf")
+    capacity_ok = dcr <= 1.0
+    slenderness_ok = slenderness <= max_slenderness
+
+    passed = capacity_ok and slenderness_ok
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "p_allowable_lbs": round(p_allowable_lbs, 1),
+        "fc_actual_psi": round(fc_actual_psi, 1),
+        "fc_prime_psi": round(fc_prime_psi, 1),
+        "fc_star_psi": round(fc_star_psi, 1),
+        "fce_psi": round(fce_psi, 1),
+        "cp_factor": round(cp, 4),
+        "slenderness": round(slenderness, 2),
+        "slenderness_ok": slenderness_ok,
+        "capacity_ok": capacity_ok,
+    }

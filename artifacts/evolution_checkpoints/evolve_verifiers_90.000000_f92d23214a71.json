@@ -1,0 +1,9 @@
+{
+  "score": 90.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nds_timber_column_compression",
+    "rationale": "Evaluates wood column axial compressive capacity and buckling stability under NDS 2018 Section 3.6 & 3.7 using the Column Stability Factor (Cp), critical buckling value (FcE), and maximum slenderness ratio limit (le/d <= 50).",
+    "model": "gemini-3.8-flash"
+  }
+}
