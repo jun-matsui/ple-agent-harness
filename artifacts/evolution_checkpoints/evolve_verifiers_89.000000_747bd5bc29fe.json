@@ -1,0 +1,9 @@
+{
+  "score": 89.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ashrae15_machinery_room_safety",
+    "rationale": "Closes a critical Mechanical PE Exam gap covering ASHRAE Standard 15 and 34 refrigerant safety group classifications, refrigerant concentration limits (RCL), emergency mechanical ventilation rates, continuous ventilation, and refrigerant vapor detection.",
+    "model": "gemini-3.8-flash"
+  }
+}

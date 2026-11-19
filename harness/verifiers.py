@@ -7867,3 +7867,131 @@ def verify_nec_pv_system_string_sizing(
         "mppt_max_ok": mppt_max_ok,
         "isc_ok": isc_ok,
     }
+
+
+def verify_ashrae15_machinery_room_safety(
+    refrigerant_charge_lbs: float,
+    refrigerant_type: str = "R-134a",
+    room_volume_cuft: float = 10000.0,
+    room_floor_area_sqft: float = 1000.0,
+    exhaust_fan_airflow_cfm: float = 2000.0,
+    normal_exhaust_airflow_cfm: float = 0.0,
+    is_machinery_room: bool = True,
+    rcl_override_lb_per_mcuft: float = 0.0,
+    detector_alarm_provided: bool = True,
+) -> Dict[str, Any]:
+    """ASHRAE 15-2019/2022 & ASHRAE 34 refrigerant concentration limit (RCL), emergency ventilation, and safety gate."""
+    scalars = [
+        refrigerant_charge_lbs,
+        room_volume_cuft,
+        room_floor_area_sqft,
+        exhaust_fan_airflow_cfm,
+        normal_exhaust_airflow_cfm,
+        rcl_override_lb_per_mcuft,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if refrigerant_charge_lbs <= 0:
+        return {"pass": False, "reason": "non_positive_refrigerant_charge"}
+    if min(room_volume_cuft, room_floor_area_sqft, exhaust_fan_airflow_cfm) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_airflow"}
+    if normal_exhaust_airflow_cfm < 0 or rcl_override_lb_per_mcuft < 0:
+        return {"pass": False, "reason": "negative_airflow_or_rcl"}
+
+    # ASHRAE Standard 34 Table 4-1 safety groups & RCL values (lb per 1000 cu ft)
+    ref_db: Dict[str, Tuple[str, float]] = {
+        "r-134a": ("A1", 16.0),
+        "r134a": ("A1", 16.0),
+        "r-410a": ("A1", 26.0),
+        "r410a": ("A1", 26.0),
+        "r-22": ("A1", 21.0),
+        "r22": ("A1", 21.0),
+        "r-404a": ("A1", 19.0),
+        "r404a": ("A1", 19.0),
+        "r-407c": ("A1", 19.0),
+        "r407c": ("A1", 19.0),
+        "r-32": ("A2L", 4.8),
+        "r32": ("A2L", 4.8),
+        "r-1233zd": ("A1", 4.4),
+        "r1233zd": ("A1", 4.4),
+        "r-1234yf": ("A2L", 4.7),
+        "r1234yf": ("A2L", 4.7),
+        "r-1234ze": ("A2L", 5.4),
+        "r1234ze": ("A2L", 5.4),
+        "r-717": ("B2L", 0.014),
+        "r717": ("B2L", 0.014),
+        "ammonia": ("B2L", 0.014),
+        "r-744": ("A1", 7.2),
+        "r744": ("A1", 7.2),
+        "co2": ("A1", 7.2),
+        "r-290": ("A3", 0.56),
+        "r290": ("A3", 0.56),
+        "propane": ("A3", 0.56),
+        "r-600a": ("A3", 0.59),
+        "r600a": ("A3", 0.59),
+        "isobutane": ("A3", 0.59),
+    }
+
+    ref_clean = refrigerant_type.strip().lower()
+    if ref_clean in ref_db:
+        safety_grp, rcl_std = ref_db[ref_clean]
+        rcl = rcl_override_lb_per_mcuft if rcl_override_lb_per_mcuft > 0.0 else rcl_std
+    elif rcl_override_lb_per_mcuft > 0.0:
+        safety_grp = "Custom"
+        rcl = rcl_override_lb_per_mcuft
+    else:
+        return {"pass": False, "reason": "unknown_refrigerant_type"}
+
+    # Refrigerant concentration upon instantaneous full release (lb / 1000 cu ft)
+    conc_lb_per_mcuft = (refrigerant_charge_lbs / room_volume_cuft) * 1000.0
+
+    # ASHRAE 15 Section 8.11.5 / IMC 1105.6.3 Emergency mechanical ventilation rate: Q = 100 * sqrt(G)
+    q_emerg_req = 100.0 * math.sqrt(refrigerant_charge_lbs)
+
+    # ASHRAE 15 Section 8.11.4 Continuous/normal ventilation rate: 0.5 CFM/sqft
+    q_normal_req = 0.50 * room_floor_area_sqft
+
+    if is_machinery_room:
+        conc_ok = True
+        emerg_dcr = q_emerg_req / exhaust_fan_airflow_cfm if exhaust_fan_airflow_cfm > 0 else float("inf")
+        emerg_ok = emerg_dcr <= 1.0
+        detector_ok = detector_alarm_provided
+
+        dcr_candidates = [emerg_dcr]
+        if normal_exhaust_airflow_cfm > 0.0:
+            normal_dcr = q_normal_req / normal_exhaust_airflow_cfm
+            normal_ok = normal_dcr <= 1.0
+            dcr_candidates.append(normal_dcr)
+        else:
+            normal_dcr = None
+            normal_ok = True
+
+        gov_dcr = max(dcr_candidates)
+        passed = emerg_ok and normal_ok and detector_ok
+    else:
+        conc_dcr = conc_lb_per_mcuft / rcl if rcl > 0 else float("inf")
+        conc_ok = conc_dcr <= 1.0
+        emerg_dcr = None
+        emerg_ok = True
+        normal_dcr = None
+        normal_ok = True
+        detector_ok = True
+        gov_dcr = conc_dcr
+        passed = conc_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "emergency_airflow_dcr": round(emerg_dcr, 4) if emerg_dcr is not None else None,
+        "normal_airflow_dcr": round(normal_dcr, 4) if normal_dcr is not None else None,
+        "refrigerant_concentration_lb_per_mcuft": round(conc_lb_per_mcuft, 4),
+        "rcl_limit_lb_per_mcuft": round(rcl, 4),
+        "q_emergency_required_cfm": round(q_emerg_req, 2),
+        "q_normal_required_cfm": round(q_normal_req, 2),
+        "refrigerant_type": ref_clean,
+        "safety_group": safety_grp,
+        "concentration_ok": conc_ok,
+        "emergency_vent_ok": emerg_ok,
+        "normal_vent_ok": normal_ok,
+        "detector_ok": detector_ok,
+    }

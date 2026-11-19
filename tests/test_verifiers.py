@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_ashrae15_machinery_room_safety,
     verify_nec_pv_system_string_sizing,
     verify_power_factor_correction_capacitor,
     verify_aci_beam_torsion,
@@ -7711,6 +7712,112 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "invalid_module_count")
+
+
+    def test_ashrae15_machinery_room_safety(self) -> None:
+        from harness.verifiers import verify_ashrae15_machinery_room_safety
+
+        # Standard passing machinery room with 400 lbs R-134a
+        # Q_emerg = 100 * sqrt(400) = 2000 CFM; provided = 2500 CFM
+        # Q_normal = 0.5 * 1200 = 600 CFM; provided = 750 CFM
+        res_pass = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=400.0,
+            refrigerant_type="R-134a",
+            room_volume_cuft=15000.0,
+            room_floor_area_sqft=1200.0,
+            exhaust_fan_airflow_cfm=2500.0,
+            normal_exhaust_airflow_cfm=750.0,
+            is_machinery_room=True,
+            detector_alarm_provided=True,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["safety_group"], "A1")
+        self.assertEqual(res_pass["rcl_limit_lb_per_mcuft"], 16.0)
+        self.assertAlmostEqual(res_pass["q_emergency_required_cfm"], 2000.0, places=1)
+        self.assertAlmostEqual(res_pass["q_normal_required_cfm"], 600.0, places=1)
+        self.assertAlmostEqual(res_pass["emergency_airflow_dcr"], 2000.0 / 2500.0, places=3)
+        self.assertAlmostEqual(res_pass["normal_airflow_dcr"], 600.0 / 750.0, places=3)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["emergency_vent_ok"])
+        self.assertTrue(res_pass["normal_vent_ok"])
+        self.assertTrue(res_pass["detector_ok"])
+
+        # Occupied space check (VRF branch in meeting room where C <= RCL is required)
+        # 120 lbs R-410A in 5000 cuft room -> C = 24.0 lb/1000 cuft <= RCL (26.0) -> Pass
+        res_occ_pass = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=120.0,
+            refrigerant_type="R-410A",
+            room_volume_cuft=5000.0,
+            is_machinery_room=False,
+        )
+        self.assertTrue(res_occ_pass["pass"])
+        self.assertAlmostEqual(res_occ_pass["refrigerant_concentration_lb_per_mcuft"], 24.0, places=1)
+        self.assertLessEqual(res_occ_pass["dcr"], 1.0)
+
+        # Occupied space failure when concentration exceeds RCL
+        # 150 lbs R-410A in 5000 cuft room -> C = 30.0 lb/1000 cuft > RCL (26.0) -> Fail
+        res_occ_fail = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=150.0,
+            refrigerant_type="R-410A",
+            room_volume_cuft=5000.0,
+            is_machinery_room=False,
+        )
+        self.assertFalse(res_occ_fail["pass"])
+        self.assertFalse(res_occ_fail["concentration_ok"])
+        self.assertGreater(res_occ_fail["dcr"], 1.0)
+
+        # Undersized emergency exhaust fan in machinery room failure
+        # 900 lbs charge requires 3000 CFM; provided = 2200 CFM
+        res_fan_fail = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=900.0,
+            refrigerant_type="R-134a",
+            exhaust_fan_airflow_cfm=2200.0,
+            is_machinery_room=True,
+        )
+        self.assertFalse(res_fan_fail["pass"])
+        self.assertFalse(res_fan_fail["emergency_vent_ok"])
+        self.assertGreater(res_fan_fail["emergency_airflow_dcr"], 1.0)
+
+        # Missing refrigerant detector alarm in machinery room failure
+        res_detector_fail = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=400.0,
+            refrigerant_type="R-134a",
+            exhaust_fan_airflow_cfm=2500.0,
+            detector_alarm_provided=False,
+        )
+        self.assertFalse(res_detector_fail["pass"])
+        self.assertFalse(res_detector_fail["detector_ok"])
+
+        # Custom refrigerant with explicit RCL override
+        res_custom = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=50.0,
+            refrigerant_type="custom_blend_xyz",
+            room_volume_cuft=10000.0,
+            rcl_override_lb_per_mcuft=10.0,
+            is_machinery_room=False,
+        )
+        self.assertTrue(res_custom["pass"])
+        self.assertEqual(res_custom["rcl_limit_lb_per_mcuft"], 10.0)
+
+        # Input error validation checks
+        res_nan = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=float("nan"),
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=-50.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_refrigerant_charge")
+
+        res_inv_ref = verify_ashrae15_machinery_room_safety(
+            refrigerant_charge_lbs=100.0,
+            refrigerant_type="unknown_fluid_99",
+        )
+        self.assertFalse(res_inv_ref["pass"])
+        self.assertEqual(res_inv_ref["reason"], "unknown_refrigerant_type")
 
 
 if __name__ == "__main__":
