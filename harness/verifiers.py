@@ -8358,3 +8358,142 @@ def verify_aisc_slip_critical_connection(
         "phi": round(phi, 2),
         "clamping_lost": k_sc == 0.0,
     }
+
+
+def verify_asce7_components_and_cladding_wind(
+    basic_wind_speed_mph: float,
+    mean_roof_height_ft: float,
+    effective_wind_area_sqft: float,
+    zone: str = "wall_zone_4",
+    p_capacity_psf: float = 30.0,
+    exposure_category: str = "C",
+    is_partially_enclosed: bool = False,
+    kd_factor: float = 0.85,
+    kzt_factor: float = 1.0,
+    ke_factor: float = 1.0,
+    min_pressure_psf: float = 16.0,
+) -> Dict[str, Any]:
+    """ASCE 7-16/7-22 Chapter 30 Part 1 Components and Cladding (C&C) wind pressure and element capacity gate."""
+    scalars = [
+        basic_wind_speed_mph,
+        mean_roof_height_ft,
+        effective_wind_area_sqft,
+        p_capacity_psf,
+        kd_factor,
+        kzt_factor,
+        ke_factor,
+        min_pressure_psf,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            basic_wind_speed_mph,
+            mean_roof_height_ft,
+            effective_wind_area_sqft,
+            p_capacity_psf,
+            kd_factor,
+            kzt_factor,
+            ke_factor,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_velocity"}
+    if min_pressure_psf < 0:
+        return {"pass": False, "reason": "negative_min_pressure"}
+    if mean_roof_height_ft > 60.0:
+        return {"pass": False, "reason": "height_exceeds_low_rise_limit"}
+
+    exp_clean = exposure_category.strip().upper()
+    exposure_constants: Dict[str, Tuple[float, float]] = {
+        "B": (7.0, 1200.0),
+        "C": (9.5, 900.0),
+        "D": (11.5, 700.0),
+    }
+    if exp_clean not in exposure_constants:
+        return {"pass": False, "reason": "invalid_exposure_category"}
+
+    alpha, zg = exposure_constants[exp_clean]
+    z_eff = max(15.0, min(mean_roof_height_ft, zg))
+    kh = 2.01 * ((z_eff / zg) ** (2.0 / alpha))
+
+    # ASCE 7 Eq. 26.10-1 velocity pressure at mean roof height qh (psf)
+    qh = 0.00256 * kh * kzt_factor * kd_factor * ke_factor * (basic_wind_speed_mph**2)
+
+    # Internal pressure coefficient GCpi (ASCE 7 Table 26.13-1)
+    gc_pi = 0.55 if is_partially_enclosed else 0.18
+
+    z_clean = zone.strip().lower().replace(" ", "_").replace("-", "_")
+    zone_map = {
+        "wall_zone_4": "wall_4",
+        "wall_4": "wall_4",
+        "zone_4": "wall_4",
+        "4": "wall_4",
+        "wall_interior": "wall_4",
+        "wall_zone_5": "wall_5",
+        "wall_5": "wall_5",
+        "zone_5": "wall_5",
+        "5": "wall_5",
+        "wall_corner": "wall_5",
+        "roof_zone_1": "roof_1",
+        "roof_1": "roof_1",
+        "zone_1": "roof_1",
+        "1": "roof_1",
+        "roof_field": "roof_1",
+        "roof_zone_2": "roof_2",
+        "roof_2": "roof_2",
+        "zone_2": "roof_2",
+        "2": "roof_2",
+        "roof_perimeter": "roof_2",
+        "roof_zone_3": "roof_3",
+        "roof_3": "roof_3",
+        "zone_3": "roof_3",
+        "3": "roof_3",
+        "roof_corner": "roof_3",
+    }
+    if z_clean not in zone_map:
+        return {"pass": False, "reason": "invalid_c_and_c_zone"}
+    norm_zone = zone_map[z_clean]
+
+    # External pressure coefficients (GCp) with log-linear area reduction
+    if norm_zone in ("wall_4", "wall_5"):
+        a_clamped = max(10.0, min(effective_wind_area_sqft, 500.0))
+        log_ratio = math.log10(a_clamped / 10.0) / math.log10(500.0 / 10.0)
+        gcp_pos = 1.0 - 0.30 * log_ratio
+        if norm_zone == "wall_4":
+            gcp_neg = -1.1 + 0.30 * log_ratio
+        else:  # wall_5
+            gcp_neg = -1.4 + 0.60 * log_ratio
+    else:  # roof zones (flat / low-slope <= 7 deg, Figure 30.3-2A)
+        a_clamped = max(10.0, min(effective_wind_area_sqft, 100.0))
+        log_ratio = math.log10(a_clamped / 10.0)
+        gcp_pos = 0.30 - 0.10 * log_ratio
+        if norm_zone == "roof_1":
+            gcp_neg = -1.0 + 0.50 * log_ratio
+        elif norm_zone == "roof_2":
+            gcp_neg = -1.8 + 0.70 * log_ratio
+        else:  # roof_3
+            gcp_neg = -2.8 + 1.70 * log_ratio
+
+    # ASCE 7 Eq. 30.4-1 design wind pressure combinations (positive & suction)
+    p_pos = qh * (gcp_pos + gc_pi)
+    p_neg = qh * (gcp_neg - gc_pi)
+
+    p_net_calc = max(abs(p_pos), abs(p_neg))
+    p_design = max(p_net_calc, min_pressure_psf)
+    dcr = p_design / p_capacity_psf if p_capacity_psf > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "p_design_psf": round(p_design, 2),
+        "p_positive_psf": round(p_pos, 2),
+        "p_negative_psf": round(p_neg, 2),
+        "qh_psf": round(qh, 2),
+        "kh": round(kh, 4),
+        "gcp_positive": round(gcp_pos, 3),
+        "gcp_negative": round(gcp_neg, 3),
+        "gc_pi": round(gc_pi, 2),
+        "zone_applied": norm_zone,
+    }

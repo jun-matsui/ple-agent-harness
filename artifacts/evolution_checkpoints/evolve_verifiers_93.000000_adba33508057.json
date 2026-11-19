@@ -1,0 +1,9 @@
+{
+  "score": 93.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_asce7_components_and_cladding_wind",
+    "rationale": "ASCE 7-16/7-22 Chapter 30 Components and Cladding (C&C) wind pressure calculation is essential for sizing wall studs, curtain walls, roof purlins, fasteners, and glazing, which experience localized peak aerodynamic suction significantly exceeding Main Wind-Force Resisting System (MWFRS) pressures.",
+    "model": "gemini-3.8-flash"
+  }
+}

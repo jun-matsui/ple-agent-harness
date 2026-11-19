@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_asce7_components_and_cladding_wind,
     verify_aisc_slip_critical_connection,
     verify_spangler_pipe_deflection,
     verify_nds_timber_column_compression,
@@ -8182,6 +8183,115 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_surface["pass"])
         self.assertEqual(res_inv_surface["reason"], "invalid_faying_surface_class")
+
+
+    def test_asce7_components_and_cladding_wind(self) -> None:
+        from harness.verifiers import verify_asce7_components_and_cladding_wind
+
+        # Standard passing wall interior (Zone 4) cladding panel check
+        res_pass = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=115.0,
+            mean_roof_height_ft=30.0,
+            effective_wind_area_sqft=20.0,
+            zone="wall_zone_4",
+            p_capacity_psf=40.0,
+            exposure_category="C",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["zone_applied"], "wall_4")
+        self.assertAlmostEqual(res_pass["kh"], 0.9823, places=2)
+        self.assertAlmostEqual(res_pass["qh_psf"], 28.26, places=1)
+        self.assertAlmostEqual(res_pass["p_design_psf"], 34.69, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Roof corner (Zone 3) with high localized suction failing nominal 50 psf capacity
+        res_corner_fail = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=115.0,
+            mean_roof_height_ft=30.0,
+            effective_wind_area_sqft=10.0,
+            zone="roof_corner",
+            p_capacity_psf=50.0,
+            exposure_category="C",
+        )
+        self.assertFalse(res_corner_fail["pass"])
+        self.assertEqual(res_corner_fail["zone_applied"], "roof_3")
+        self.assertEqual(res_corner_fail["gcp_negative"], -2.8)
+        self.assertAlmostEqual(res_corner_fail["p_design_psf"], 84.22, places=1)
+        self.assertGreater(res_corner_fail["dcr"], 1.0)
+
+        # Large tributary area reducing localized suction coefficient
+        res_large_area = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=115.0,
+            mean_roof_height_ft=30.0,
+            effective_wind_area_sqft=100.0,
+            zone="roof_corner",
+            p_capacity_psf=50.0,
+            exposure_category="C",
+        )
+        self.assertTrue(res_large_area["pass"])
+        self.assertEqual(res_large_area["gcp_negative"], -1.1)
+        self.assertAlmostEqual(res_large_area["p_design_psf"], 36.17, places=1)
+        self.assertLess(res_large_area["dcr"], 1.0)
+
+        # Partially enclosed building internal pressure boost (GCpi = 0.55)
+        res_part_enclosed = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=115.0,
+            mean_roof_height_ft=30.0,
+            effective_wind_area_sqft=50.0,
+            zone="wall_zone_5",
+            p_capacity_psf=45.0,
+            is_partially_enclosed=True,
+        )
+        self.assertEqual(res_part_enclosed["gc_pi"], 0.55)
+        self.assertGreater(res_part_enclosed["p_design_psf"], res_pass["p_design_psf"])
+
+        # Minimum code design pressure threshold (16.0 psf)
+        res_min_press = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=50.0,
+            mean_roof_height_ft=15.0,
+            effective_wind_area_sqft=100.0,
+            zone="wall_zone_4",
+            p_capacity_psf=20.0,
+            exposure_category="B",
+        )
+        self.assertTrue(res_min_press["pass"])
+        self.assertEqual(res_min_press["p_design_psf"], 16.0)
+
+        # Low-rise building height exceeded error (h > 60 ft)
+        res_height_err = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=115.0,
+            mean_roof_height_ft=75.0,
+            effective_wind_area_sqft=20.0,
+        )
+        self.assertFalse(res_height_err["pass"])
+        self.assertEqual(res_height_err["reason"], "height_exceeds_low_rise_limit")
+
+        # Invalid zone string error
+        res_zone_err = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=115.0,
+            mean_roof_height_ft=30.0,
+            effective_wind_area_sqft=20.0,
+            zone="chimney_flue_9",
+        )
+        self.assertFalse(res_zone_err["pass"])
+        self.assertEqual(res_zone_err["reason"], "invalid_c_and_c_zone")
+
+        # NaN and negative input validation checks
+        res_nan = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=float("nan"),
+            mean_roof_height_ft=30.0,
+            effective_wind_area_sqft=20.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_asce7_components_and_cladding_wind(
+            basic_wind_speed_mph=-115.0,
+            mean_roof_height_ft=30.0,
+            effective_wind_area_sqft=20.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_velocity")
 
 
 if __name__ == "__main__":
