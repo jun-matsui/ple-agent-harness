@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_ashrae_ahu_psychrometric_mixing,
     verify_aci_spread_footing,
     verify_nfpa20_fire_pump_performance,
     verify_aci_anchor_bolt_tension,
@@ -5979,6 +5980,147 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_input")
+
+
+    def test_ashrae_ahu_psychrometric_mixing(self) -> None:
+        from harness.verifiers import verify_ashrae_ahu_psychrometric_mixing
+
+        # Standard passing commercial AHU cooling and dehumidification check
+        res_pass = verify_ashrae_ahu_psychrometric_mixing(
+            outdoor_airflow_cfm=2000.0,
+            return_airflow_cfm=8000.0,
+            t_outdoor_db_f=95.0,
+            t_return_db_f=75.0,
+            w_outdoor_lb_per_lb=0.0140,
+            w_return_lb_per_lb=0.0090,
+            t_leaving_db_f=53.0,
+            w_leaving_lb_per_lb=0.0080,
+            coil_cooling_capacity_tons=35.0,
+            coil_sensible_capacity_btuh=300000.0,
+            min_oa_fraction=0.15,
+            min_mixed_temp_f=40.0,
+            elevation_ft=0.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["oa_fraction"], 0.20)
+        self.assertEqual(res_pass["t_mixed_db_f"], 79.0)
+        self.assertEqual(res_pass["w_mixed_lb_per_lb"], 0.0100)
+        self.assertAlmostEqual(res_pass["q_sensible_btuh"], 280800.0, places=1)
+        self.assertAlmostEqual(res_pass["q_latent_btuh"], 96800.0, places=1)
+        self.assertAlmostEqual(res_pass["tons_required"], 31.97, places=1)
+        self.assertLess(res_pass["total_dcr"], 1.0)
+        self.assertLess(res_pass["sensible_dcr"], 1.0)
+        self.assertFalse(res_pass["freeze_risk"])
+        self.assertTrue(res_pass["oa_fraction_ok"])
+
+        # Winter economizer freeze-stat alarm (T_mixed < 40F)
+        res_freeze = verify_ashrae_ahu_psychrometric_mixing(
+            outdoor_airflow_cfm=6000.0,
+            return_airflow_cfm=4000.0,
+            t_outdoor_db_f=10.0,
+            t_return_db_f=70.0,
+            w_outdoor_lb_per_lb=0.0010,
+            w_return_lb_per_lb=0.0060,
+            t_leaving_db_f=30.0,
+            w_leaving_lb_per_lb=0.0020,
+            coil_cooling_capacity_tons=20.0,
+            min_mixed_temp_f=40.0,
+        )
+        self.assertFalse(res_freeze["pass"])
+        self.assertTrue(res_freeze["freeze_risk"])
+        self.assertEqual(res_freeze["t_mixed_db_f"], 34.0)
+
+        # Undersized outdoor air ventilation fraction failure
+        res_low_oa = verify_ashrae_ahu_psychrometric_mixing(
+            outdoor_airflow_cfm=1000.0,
+            return_airflow_cfm=9000.0,
+            t_outdoor_db_f=90.0,
+            t_return_db_f=75.0,
+            w_outdoor_lb_per_lb=0.0130,
+            w_return_lb_per_lb=0.0090,
+            t_leaving_db_f=55.0,
+            w_leaving_lb_per_lb=0.0085,
+            coil_cooling_capacity_tons=30.0,
+            min_oa_fraction=0.20,
+        )
+        self.assertFalse(res_low_oa["pass"])
+        self.assertFalse(res_low_oa["oa_fraction_ok"])
+        self.assertEqual(res_low_oa["oa_fraction"], 0.10)
+
+        # Undersized cooling coil capacity failure (tons required > capacity)
+        res_coil_fail = verify_ashrae_ahu_psychrometric_mixing(
+            outdoor_airflow_cfm=2000.0,
+            return_airflow_cfm=8000.0,
+            t_outdoor_db_f=95.0,
+            t_return_db_f=75.0,
+            w_outdoor_lb_per_lb=0.0140,
+            w_return_lb_per_lb=0.0090,
+            t_leaving_db_f=53.0,
+            w_leaving_lb_per_lb=0.0080,
+            coil_cooling_capacity_tons=25.0,
+        )
+        self.assertFalse(res_coil_fail["pass"])
+        self.assertFalse(res_coil_fail["total_ok"])
+        self.assertGreater(res_coil_fail["total_dcr"], 1.0)
+
+        # Physical violation: cooling coil adding moisture (w_leaving > w_mixed)
+        res_moisture_err = verify_ashrae_ahu_psychrometric_mixing(
+            outdoor_airflow_cfm=2000.0,
+            return_airflow_cfm=8000.0,
+            t_outdoor_db_f=95.0,
+            t_return_db_f=75.0,
+            w_outdoor_lb_per_lb=0.0100,
+            w_return_lb_per_lb=0.0100,
+            t_leaving_db_f=53.0,
+            w_leaving_lb_per_lb=0.0120,
+            coil_cooling_capacity_tons=35.0,
+        )
+        self.assertFalse(res_moisture_err["pass"])
+        self.assertEqual(res_moisture_err["reason"], "cooling_coil_adds_moisture")
+
+        # Thermodynamic violation: leaving temp not below mixed air temp
+        res_temp_err = verify_ashrae_ahu_psychrometric_mixing(
+            outdoor_airflow_cfm=2000.0,
+            return_airflow_cfm=8000.0,
+            t_outdoor_db_f=75.0,
+            t_return_db_f=75.0,
+            w_outdoor_lb_per_lb=0.0100,
+            w_return_lb_per_lb=0.0100,
+            t_leaving_db_f=78.0,
+            w_leaving_lb_per_lb=0.0080,
+            coil_cooling_capacity_tons=35.0,
+        )
+        self.assertFalse(res_temp_err["pass"])
+        self.assertEqual(res_temp_err["reason"], "leaving_temp_not_below_mixed_temp")
+
+        # NaN and negative input validation checks
+        res_nan = verify_ashrae_ahu_psychrometric_mixing(
+            outdoor_airflow_cfm=float("nan"),
+            return_airflow_cfm=8000.0,
+            t_outdoor_db_f=95.0,
+            t_return_db_f=75.0,
+            w_outdoor_lb_per_lb=0.0140,
+            w_return_lb_per_lb=0.0090,
+            t_leaving_db_f=53.0,
+            w_leaving_lb_per_lb=0.0080,
+            coil_cooling_capacity_tons=35.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_ashrae_ahu_psychrometric_mixing(
+            outdoor_airflow_cfm=-1000.0,
+            return_airflow_cfm=8000.0,
+            t_outdoor_db_f=95.0,
+            t_return_db_f=75.0,
+            w_outdoor_lb_per_lb=0.0140,
+            w_return_lb_per_lb=0.0090,
+            t_leaving_db_f=53.0,
+            w_leaving_lb_per_lb=0.0080,
+            coil_cooling_capacity_tons=35.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_airflow")
 
 
 if __name__ == "__main__":

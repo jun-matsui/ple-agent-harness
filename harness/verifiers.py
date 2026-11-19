@@ -6117,3 +6117,126 @@ def verify_aci_spread_footing(
         "flexure_ok": flex_ok,
         "as_min_ok": as_min_ok,
     }
+
+
+def verify_ashrae_ahu_psychrometric_mixing(
+    outdoor_airflow_cfm: float,
+    return_airflow_cfm: float,
+    t_outdoor_db_f: float,
+    t_return_db_f: float,
+    w_outdoor_lb_per_lb: float,
+    w_return_lb_per_lb: float,
+    t_leaving_db_f: float,
+    w_leaving_lb_per_lb: float,
+    coil_cooling_capacity_tons: float,
+    coil_sensible_capacity_btuh: float = 0.0,
+    min_oa_fraction: float = 0.0,
+    min_mixed_temp_f: float = 40.0,
+    elevation_ft: float = 0.0,
+) -> Dict[str, Any]:
+    """ASHRAE Fundamentals & 62.1 AHU economizer mixed-air psychrometrics, coil thermal duty, and freeze gate."""
+    scalars = [
+        outdoor_airflow_cfm,
+        return_airflow_cfm,
+        t_outdoor_db_f,
+        t_return_db_f,
+        w_outdoor_lb_per_lb,
+        w_return_lb_per_lb,
+        t_leaving_db_f,
+        w_leaving_lb_per_lb,
+        coil_cooling_capacity_tons,
+        coil_sensible_capacity_btuh,
+        min_oa_fraction,
+        min_mixed_temp_f,
+        elevation_ft,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if outdoor_airflow_cfm < 0 or return_airflow_cfm < 0:
+        return {"pass": False, "reason": "negative_airflow"}
+    total_cfm = outdoor_airflow_cfm + return_airflow_cfm
+    if total_cfm <= 0:
+        return {"pass": False, "reason": "zero_total_airflow"}
+    if (
+        w_outdoor_lb_per_lb < 0
+        or w_return_lb_per_lb < 0
+        or w_leaving_lb_per_lb < 0
+    ):
+        return {"pass": False, "reason": "negative_humidity_ratio"}
+    if coil_cooling_capacity_tons <= 0:
+        return {"pass": False, "reason": "non_positive_coil_capacity"}
+    if coil_sensible_capacity_btuh < 0:
+        return {"pass": False, "reason": "negative_sensible_capacity"}
+    if not (0.0 <= min_oa_fraction <= 1.0):
+        return {"pass": False, "reason": "invalid_oa_fraction_limit"}
+    if elevation_ft < -1000.0 or elevation_ft > 30000.0:
+        return {"pass": False, "reason": "invalid_elevation"}
+
+    oa_fraction = outdoor_airflow_cfm / total_cfm
+    oa_fraction_ok = oa_fraction >= (min_oa_fraction - 1e-6)
+
+    t_mixed_db_f = oa_fraction * t_outdoor_db_f + (1.0 - oa_fraction) * t_return_db_f
+    w_mixed = oa_fraction * w_outdoor_lb_per_lb + (1.0 - oa_fraction) * w_return_lb_per_lb
+
+    if w_leaving_lb_per_lb > (w_mixed + 1e-6):
+        return {"pass": False, "reason": "cooling_coil_adds_moisture"}
+    if t_leaving_db_f >= t_mixed_db_f:
+        return {"pass": False, "reason": "leaving_temp_not_below_mixed_temp"}
+
+    p_atm_psia = 14.696 * ((1.0 - 0.0000068756 * elevation_ft) ** 5.2559)
+    density_ratio = p_atm_psia / 14.696
+    c_s = 1.08 * density_ratio
+    c_l = 4840.0 * density_ratio
+    c_t = 4.5 * density_ratio
+
+    h_mixed = 0.240 * t_mixed_db_f + w_mixed * (1061.0 + 0.444 * t_mixed_db_f)
+    h_leaving = 0.240 * t_leaving_db_f + w_leaving_lb_per_lb * (1061.0 + 0.444 * t_leaving_db_f)
+
+    q_sensible_btuh = c_s * total_cfm * (t_mixed_db_f - t_leaving_db_f)
+    q_latent_btuh = c_l * total_cfm * (w_mixed - w_leaving_lb_per_lb)
+    q_total_btuh = c_t * total_cfm * (h_mixed - h_leaving)
+
+    tons_required = q_total_btuh / 12000.0
+    total_dcr = tons_required / coil_cooling_capacity_tons
+    total_ok = total_dcr <= 1.0
+
+    sensible_dcr = None
+    sensible_ok = True
+    if coil_sensible_capacity_btuh > 0.0:
+        sensible_dcr = q_sensible_btuh / coil_sensible_capacity_btuh
+        sensible_ok = sensible_dcr <= 1.0
+
+    freeze_risk = t_mixed_db_f < min_mixed_temp_f
+    freeze_ok = not freeze_risk
+
+    dcr_candidates = [total_dcr]
+    if sensible_dcr is not None:
+        dcr_candidates.append(sensible_dcr)
+    if min_oa_fraction > 0.0 and oa_fraction > 0.0:
+        dcr_candidates.append(min_oa_fraction / oa_fraction)
+    gov_dcr = max(dcr_candidates)
+
+    passed = total_ok and sensible_ok and oa_fraction_ok and freeze_ok
+    shr = q_sensible_btuh / (q_sensible_btuh + q_latent_btuh) if (q_sensible_btuh + q_latent_btuh) > 0 else 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "total_dcr": round(total_dcr, 4),
+        "sensible_dcr": round(sensible_dcr, 4) if sensible_dcr is not None else None,
+        "t_mixed_db_f": round(t_mixed_db_f, 2),
+        "w_mixed_lb_per_lb": round(w_mixed, 5),
+        "h_mixed_btu_per_lb": round(h_mixed, 2),
+        "h_leaving_btu_per_lb": round(h_leaving, 2),
+        "q_sensible_btuh": round(q_sensible_btuh, 1),
+        "q_latent_btuh": round(q_latent_btuh, 1),
+        "q_total_btuh": round(q_total_btuh, 1),
+        "tons_required": round(tons_required, 2),
+        "shr": round(shr, 4),
+        "oa_fraction": round(oa_fraction, 4),
+        "freeze_risk": freeze_risk,
+        "oa_fraction_ok": oa_fraction_ok,
+        "total_ok": total_ok,
+        "sensible_ok": sensible_ok,
+        "freeze_ok": freeze_ok,
+    }

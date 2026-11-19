@@ -1,0 +1,9 @@
+{
+  "score": 76.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ashrae_ahu_psychrometric_mixing",
+    "rationale": "Validates commercial air-handling unit (AHU) economizer mixing, minimum outdoor air ventilation fraction, mixed-air psychrometric state, entering/leaving cooling coil sensible and total heat loads against coil capacities, and low-temperature freeze-stat risk per ASHRAE Fundamentals and Standard 62.1.",
+    "model": "gemini-3.8-flash"
+  }
+}
