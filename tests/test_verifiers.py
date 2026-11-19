@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_concrete_shear_wall,
     verify_aisc_plate_girder_shear,
     verify_ashrae_ahu_psychrometric_mixing,
     verify_aci_spread_footing,
@@ -6237,6 +6238,135 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_depth_err["pass"])
         self.assertEqual(res_depth_err["reason"], "web_depth_exceeds_total_depth")
+
+
+    def test_aci_concrete_shear_wall(self) -> None:
+        from harness.verifiers import verify_aci_concrete_shear_wall
+
+        # Standard passing squatted shear wall (hw/lw = 0.5 <= 1.5 -> alpha_c = 3.0)
+        res_pass = verify_aci_concrete_shear_wall(
+            vu_kips=500.0,
+            hw_ft=10.0,
+            lw_ft=20.0,
+            tw_in=12.0,
+            rho_t=0.0030,
+            rho_l=0.0030,
+            fc_psi=4000.0,
+            fy_psi=60000.0,
+            num_curtains=2,
+            is_special_seismic=False,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["alpha_c"], 3.0)
+        self.assertEqual(res_pass["hw_over_lw"], 0.5)
+        self.assertAlmostEqual(res_pass["vc_kips"], 546.44, places=1)
+        self.assertAlmostEqual(res_pass["vs_kips"], 518.40, places=1)
+        self.assertAlmostEqual(res_pass["vn_kips"], 1064.84, places=1)
+        self.assertAlmostEqual(res_pass["phi_vn_kips"], 798.63, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 500.0 / 798.63, places=3)
+        self.assertEqual(res_pass["curtains_required"], 2)
+        self.assertTrue(res_pass["shear_ok"])
+        self.assertTrue(res_pass["rho_t_ok"])
+        self.assertTrue(res_pass["rho_l_ok"])
+        self.assertTrue(res_pass["curtains_ok"])
+
+        # Slender special seismic wall (hw/lw = 2.5 >= 2.0 -> alpha_c = 2.0)
+        res_slender = verify_aci_concrete_shear_wall(
+            vu_kips=300.0,
+            hw_ft=30.0,
+            lw_ft=12.0,
+            tw_in=10.0,
+            rho_t=0.0035,
+            rho_l=0.0035,
+            fc_psi=4000.0,
+            is_special_seismic=True,
+            num_curtains=2,
+        )
+        self.assertTrue(res_slender["pass"])
+        self.assertEqual(res_slender["alpha_c"], 2.0)
+        self.assertEqual(res_slender["hw_over_lw"], 2.5)
+        self.assertLess(res_slender["dcr"], 1.0)
+
+        # Shear overload failure (Vu > phi * Vn)
+        res_fail_shear = verify_aci_concrete_shear_wall(
+            vu_kips=950.0,
+            hw_ft=10.0,
+            lw_ft=20.0,
+            tw_in=12.0,
+            rho_t=0.0030,
+            rho_l=0.0030,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_fail_shear["pass"])
+        self.assertFalse(res_fail_shear["shear_ok"])
+        self.assertGreater(res_fail_shear["dcr"], 1.0)
+
+        # Undersized transverse reinforcement failure (rho_t < 0.0025)
+        res_fail_reinf = verify_aci_concrete_shear_wall(
+            vu_kips=500.0,
+            hw_ft=10.0,
+            lw_ft=20.0,
+            tw_in=12.0,
+            rho_t=0.0018,
+            rho_l=0.0030,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_fail_reinf["pass"])
+        self.assertFalse(res_fail_reinf["rho_t_ok"])
+        self.assertEqual(res_fail_reinf["rho_t_min"], 0.0025)
+
+        # Single curtain provided when two curtains are required by shear demand
+        res_fail_curtain = verify_aci_concrete_shear_wall(
+            vu_kips=500.0,
+            hw_ft=10.0,
+            lw_ft=20.0,
+            tw_in=12.0,
+            rho_t=0.0030,
+            rho_l=0.0030,
+            fc_psi=4000.0,
+            num_curtains=1,
+        )
+        self.assertFalse(res_fail_curtain["pass"])
+        self.assertFalse(res_fail_curtain["curtains_ok"])
+        self.assertEqual(res_fail_curtain["curtains_required"], 2)
+
+        # Input error validation checks
+        res_nan = verify_aci_concrete_shear_wall(
+            vu_kips=float("nan"),
+            hw_ft=10.0,
+            lw_ft=20.0,
+            tw_in=12.0,
+            rho_t=0.0030,
+            rho_l=0.0030,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_concrete_shear_wall(
+            vu_kips=-50.0,
+            hw_ft=10.0,
+            lw_ft=20.0,
+            tw_in=12.0,
+            rho_t=0.0030,
+            rho_l=0.0030,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_curtain_err = verify_aci_concrete_shear_wall(
+            vu_kips=200.0,
+            hw_ft=10.0,
+            lw_ft=20.0,
+            tw_in=12.0,
+            rho_t=0.0030,
+            rho_l=0.0030,
+            fc_psi=4000.0,
+            num_curtains=3,
+        )
+        self.assertFalse(res_curtain_err["pass"])
+        self.assertEqual(res_curtain_err["reason"], "invalid_curtain_count")
 
 
 if __name__ == "__main__":

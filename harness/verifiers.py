@@ -6350,3 +6350,118 @@ def verify_aisc_plate_girder_shear(
         "is_stiffened": is_stiffened,
         "tfa_applied": tfa_applied,
     }
+
+
+def verify_aci_concrete_shear_wall(
+    vu_kips: float,
+    hw_ft: float,
+    lw_ft: float,
+    tw_in: float,
+    rho_t: float,
+    rho_l: float,
+    fc_psi: float,
+    fy_psi: float = 60000.0,
+    num_curtains: int = 2,
+    is_special_seismic: bool = False,
+    lambda_factor: float = 1.0,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 11.5 & 18.10 reinforced concrete shear wall in-plane shear capacity and detailing gate."""
+    scalars = [
+        vu_kips,
+        hw_ft,
+        lw_ft,
+        tw_in,
+        rho_t,
+        rho_l,
+        fc_psi,
+        fy_psi,
+        float(num_curtains),
+        lambda_factor,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if vu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(hw_ft, lw_ft, tw_in, fc_psi, fy_psi, lambda_factor, phi) <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if rho_t < 0 or rho_l < 0:
+        return {"pass": False, "reason": "negative_reinforcement_ratio"}
+    if num_curtains not in (1, 2):
+        return {"pass": False, "reason": "invalid_curtain_count"}
+
+    # Cross-sectional gross area of concrete resisting shear (Acv)
+    lw_in = lw_ft * 12.0
+    acv_in2 = lw_in * tw_in
+    hw_over_lw = hw_ft / lw_ft
+    sqrt_fc = math.sqrt(fc_psi)
+
+    # ACI 318-19 Section 18.10.4.1 concrete shear coefficient alpha_c
+    if is_special_seismic or hw_over_lw <= 2.0:
+        if hw_over_lw <= 1.5:
+            alpha_c = 3.0
+        elif hw_over_lw >= 2.0:
+            alpha_c = 2.0
+        else:
+            alpha_c = 3.0 - 2.0 * (hw_over_lw - 1.5)
+    else:
+        alpha_c = 2.0
+
+    # Concrete shear strength contribution (Vc)
+    vc_lb = alpha_c * lambda_factor * sqrt_fc * acv_in2
+    vc_kips = vc_lb / 1000.0
+
+    # Transverse reinforcement shear strength contribution (Vs)
+    vs_lb = rho_t * fy_psi * acv_in2
+    vs_kips = vs_lb / 1000.0
+
+    # Section maximum allowable nominal shear strength (ACI 11.5.4.2 & 18.10.4.4)
+    vn_max_kips = (8.0 * sqrt_fc * acv_in2) / 1000.0
+    vn_calc_kips = vc_kips + vs_kips
+    vn_kips = min(vn_calc_kips, vn_max_kips)
+    phi_vn_kips = phi * vn_kips
+
+    shear_dcr = vu_kips / phi_vn_kips if phi_vn_kips > 0 else float("inf")
+    shear_ok = shear_dcr <= 1.0
+
+    # Minimum transverse reinforcement ratio rho_t (ACI 11.6.1 & 18.10.2.1)
+    vc_threshold_kips = (0.5 * phi * 2.0 * lambda_factor * sqrt_fc * acv_in2) / 1000.0
+    transverse_req = is_special_seismic or (vu_kips > vc_threshold_kips)
+    rho_t_min = 0.0025 if transverse_req else 0.0020
+    rho_t_ok = rho_t >= rho_t_min
+
+    # Minimum longitudinal reinforcement ratio rho_l (ACI 11.6.2 & 18.10.4.3)
+    if is_special_seismic and hw_over_lw <= 2.0:
+        rho_l_min = max(0.0025, rho_t)
+    elif transverse_req:
+        rho_l_min = 0.0025
+    else:
+        rho_l_min = 0.0015
+    rho_l_ok = rho_l >= rho_l_min
+
+    # Two curtains required if Vu > 2 * phi * Acv * lambda * sqrt(f'c) or special wall with tw >= 10 in
+    curtain_threshold_kips = (phi * 2.0 * lambda_factor * sqrt_fc * acv_in2) / 1000.0
+    curtains_required = 2 if (vu_kips > curtain_threshold_kips or (is_special_seismic and tw_in >= 10.0)) else 1
+    curtains_ok = num_curtains >= curtains_required
+
+    passed = shear_ok and rho_t_ok and rho_l_ok and curtains_ok
+    return {
+        "pass": passed,
+        "dcr": round(shear_dcr, 4),
+        "phi_vn_kips": round(phi_vn_kips, 2),
+        "vn_kips": round(vn_kips, 2),
+        "vc_kips": round(vc_kips, 2),
+        "vs_kips": round(vs_kips, 2),
+        "alpha_c": round(alpha_c, 3),
+        "hw_over_lw": round(hw_over_lw, 3),
+        "rho_t_min": round(rho_t_min, 4),
+        "rho_l_min": round(rho_l_min, 4),
+        "curtains_required": curtains_required,
+        "shear_ok": shear_ok,
+        "rho_t_ok": rho_t_ok,
+        "rho_l_ok": rho_l_ok,
+        "curtains_ok": curtains_ok,
+    }

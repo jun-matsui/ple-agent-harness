@@ -1,0 +1,9 @@
+{
+  "score": 78.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_concrete_shear_wall",
+    "rationale": "ACI 318-19 Section 11.5 and Section 18.10 govern in-plane shear design, aspect-ratio concrete shear coefficients, upper-bound capacity limits, reinforcement ratios, and curtain requirements for reinforced concrete shear walls. This addresses a critical core requirement on Physical Engineering Exams (PLE Structural/Civil) where lateral force resisting systems are verified.",
+    "model": "gemini-3.8-flash"
+  }
+}
