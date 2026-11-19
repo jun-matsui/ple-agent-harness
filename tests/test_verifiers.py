@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_prestressed_concrete_stresses,
     verify_aisc_composite_beam_flexure,
     verify_nds_timber_beam_flexure_and_shear,
     verify_aisc_panel_zone_shear,
@@ -6925,6 +6926,184 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_deck_err["pass"])
         self.assertEqual(res_deck_err["reason"], "deck_height_exceeds_total_slab_thickness")
+
+
+    def test_aci_prestressed_concrete_stresses(self) -> None:
+        from harness.verifiers import verify_aci_prestressed_concrete_stresses
+
+        # Standard passing rectangular prestressed beam (12x24 in, Pi=180 kips, Pe=150 kips, e=6 in)
+        res_pass = verify_aci_prestressed_concrete_stresses(
+            fci_psi=4000.0,
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=180.0,
+            p_effective_kips=150.0,
+            eccentricity_in=6.0,
+            m_sw_kip_ft=30.0,
+            m_dead_kip_ft=25.0,
+            m_live_kip_ft=40.0,
+            beam_class="Class_U",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["f_ti_psi"], 0.0)
+        self.assertEqual(res_pass["f_bi_psi"], -1250.0)
+        self.assertEqual(res_pass["f_ts_psi"], -312.5)
+        self.assertEqual(res_pass["f_tt_psi"], -729.2)
+        self.assertEqual(res_pass["f_bt_psi"], -312.5)
+        self.assertAlmostEqual(res_pass["dcr"], 1250.0 / 2400.0, places=3)
+        self.assertTrue(res_pass["transfer_ok"])
+        self.assertTrue(res_pass["service_ok"])
+
+        # High service live load exceeding Class U tension limit (allowable 580.9 psi)
+        res_fail_tens = verify_aci_prestressed_concrete_stresses(
+            fci_psi=4000.0,
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=180.0,
+            p_effective_kips=150.0,
+            eccentricity_in=6.0,
+            m_sw_kip_ft=30.0,
+            m_dead_kip_ft=25.0,
+            m_live_kip_ft=140.0,
+            beam_class="Class_U",
+        )
+        self.assertFalse(res_fail_tens["pass"])
+        self.assertFalse(res_fail_tens["service_ok"])
+        self.assertGreater(res_fail_tens["f_bt_psi"], res_fail_tens["allow_tens_service_psi"])
+        self.assertGreater(res_fail_tens["dcr"], 1.0)
+
+        # Class T permitting higher tension (12*sqrt(fc') = 929.5 psi) passes the same moment
+        res_class_t = verify_aci_prestressed_concrete_stresses(
+            fci_psi=4000.0,
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=180.0,
+            p_effective_kips=150.0,
+            eccentricity_in=6.0,
+            m_sw_kip_ft=30.0,
+            m_dead_kip_ft=25.0,
+            m_live_kip_ft=140.0,
+            beam_class="Class_T",
+        )
+        self.assertTrue(res_class_t["pass"])
+        self.assertLess(res_class_t["f_bt_psi"], res_class_t["allow_tens_service_psi"])
+        self.assertLess(res_class_t["dcr"], 1.0)
+
+        # Excessive initial prestress causing transfer bottom compression failure
+        res_fail_init_comp = verify_aci_prestressed_concrete_stresses(
+            fci_psi=4000.0,
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=380.0,
+            p_effective_kips=300.0,
+            eccentricity_in=6.0,
+            m_sw_kip_ft=20.0,
+            m_dead_kip_ft=25.0,
+            m_live_kip_ft=40.0,
+        )
+        self.assertFalse(res_fail_init_comp["pass"])
+        self.assertFalse(res_fail_init_comp["transfer_ok"])
+        self.assertGreater(res_fail_init_comp["dcr"], 1.0)
+
+        # Transfer top fiber tension failure (high eccentricity with low self-weight moment)
+        res_fail_init_tens = verify_aci_prestressed_concrete_stresses(
+            fci_psi=4000.0,
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=200.0,
+            p_effective_kips=160.0,
+            eccentricity_in=8.0,
+            m_sw_kip_ft=5.0,
+            m_dead_kip_ft=20.0,
+            m_live_kip_ft=30.0,
+        )
+        self.assertFalse(res_fail_init_tens["pass"])
+        self.assertGreater(res_fail_init_tens["f_ti_psi"], res_fail_init_tens["allow_tens_transfer_psi"])
+
+        # Input error validation checks
+        res_nan = verify_aci_prestressed_concrete_stresses(
+            fci_psi=float("nan"),
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=180.0,
+            p_effective_kips=150.0,
+            eccentricity_in=6.0,
+            m_sw_kip_ft=30.0,
+            m_dead_kip_ft=25.0,
+            m_live_kip_ft=40.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_fci_err = verify_aci_prestressed_concrete_stresses(
+            fci_psi=6500.0,
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=180.0,
+            p_effective_kips=150.0,
+            eccentricity_in=6.0,
+            m_sw_kip_ft=30.0,
+            m_dead_kip_ft=25.0,
+            m_live_kip_ft=40.0,
+        )
+        self.assertFalse(res_fci_err["pass"])
+        self.assertEqual(res_fci_err["reason"], "fci_exceeds_fc")
+
+        res_pe_err = verify_aci_prestressed_concrete_stresses(
+            fci_psi=4000.0,
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=150.0,
+            p_effective_kips=180.0,
+            eccentricity_in=6.0,
+            m_sw_kip_ft=30.0,
+            m_dead_kip_ft=25.0,
+            m_live_kip_ft=40.0,
+        )
+        self.assertFalse(res_pe_err["pass"])
+        self.assertEqual(res_pe_err["reason"], "effective_prestress_exceeds_initial")
+
+        res_class_err = verify_aci_prestressed_concrete_stresses(
+            fci_psi=4000.0,
+            fc_psi=6000.0,
+            ag_in2=288.0,
+            ig_in4=13824.0,
+            yt_in=12.0,
+            yb_in=12.0,
+            p_initial_kips=180.0,
+            p_effective_kips=150.0,
+            eccentricity_in=6.0,
+            m_sw_kip_ft=30.0,
+            m_dead_kip_ft=25.0,
+            m_live_kip_ft=40.0,
+            beam_class="Class_X",
+        )
+        self.assertFalse(res_class_err["pass"])
+        self.assertEqual(res_class_err["reason"], "invalid_beam_class")
 
 
 if __name__ == "__main__":

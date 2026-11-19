@@ -6969,3 +6969,162 @@ def verify_aisc_composite_beam_flexure(
         "effective_slab_width_in": round(b_eff, 2),
         "a_in": round(a_in, 3),
     }
+
+
+def verify_aci_prestressed_concrete_stresses(
+    fci_psi: float,
+    fc_psi: float,
+    ag_in2: float,
+    ig_in4: float,
+    yt_in: float,
+    yb_in: float,
+    p_initial_kips: float,
+    p_effective_kips: float,
+    eccentricity_in: float,
+    m_sw_kip_ft: float,
+    m_dead_kip_ft: float,
+    m_live_kip_ft: float,
+    beam_class: str = "Class_U",
+    initial_tension_coeff: float = 3.0,
+    lambda_factor: float = 1.0,
+) -> Dict[str, Any]:
+    """ACI 318-19 Section 24.5 prestressed concrete beam transfer and service load stress gate."""
+    scalars = [
+        fci_psi,
+        fc_psi,
+        ag_in2,
+        ig_in4,
+        yt_in,
+        yb_in,
+        p_initial_kips,
+        p_effective_kips,
+        eccentricity_in,
+        m_sw_kip_ft,
+        m_dead_kip_ft,
+        m_live_kip_ft,
+        initial_tension_coeff,
+        lambda_factor,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            fci_psi,
+            fc_psi,
+            ag_in2,
+            ig_in4,
+            yt_in,
+            yb_in,
+            p_initial_kips,
+            p_effective_kips,
+            initial_tension_coeff,
+            lambda_factor,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if (
+        eccentricity_in < 0
+        or m_sw_kip_ft < 0
+        or m_dead_kip_ft < 0
+        or m_live_kip_ft < 0
+    ):
+        return {"pass": False, "reason": "negative_load_or_eccentricity"}
+    if fci_psi > fc_psi:
+        return {"pass": False, "reason": "fci_exceeds_fc"}
+    if p_effective_kips > p_initial_kips:
+        return {"pass": False, "reason": "effective_prestress_exceeds_initial"}
+
+    b_class = beam_class.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_classes = {"class_u", "u", "class_t", "t", "class_c", "c"}
+    if b_class not in valid_classes:
+        return {"pass": False, "reason": "invalid_beam_class"}
+
+    # 1. Transfer Stage Stresses (Prestress Pi + Self-weight Msw)
+    # Sign convention: Compression is negative (-), Tension is positive (+)
+    pi_lb = p_initial_kips * 1000.0
+    m_sw_lb_in = m_sw_kip_ft * 12000.0
+
+    axial_i = pi_lb / ag_in2
+    prestress_moment_i = (pi_lb * eccentricity_in)
+    f_ti = -axial_i + (prestress_moment_i * yt_in / ig_in4) - (m_sw_lb_in * yt_in / ig_in4)
+    f_bi = -axial_i - (prestress_moment_i * yb_in / ig_in4) + (m_sw_lb_in * yb_in / ig_in4)
+
+    # Transfer stage allowable limits (ACI 318-19 Table 24.5.3.1)
+    allow_comp_transfer = 0.60 * fci_psi
+    allow_tens_transfer = initial_tension_coeff * lambda_factor * math.sqrt(fci_psi)
+
+    # Top fiber transfer check
+    if f_ti > 0.0:
+        dcr_ti = f_ti / allow_tens_transfer if allow_tens_transfer > 0 else float("inf")
+        ti_ok = dcr_ti <= 1.0
+    else:
+        dcr_ti = abs(f_ti) / allow_comp_transfer
+        ti_ok = dcr_ti <= 1.0
+
+    # Bottom fiber transfer check (typically compressive)
+    if f_bi < 0.0:
+        dcr_bi = abs(f_bi) / allow_comp_transfer
+        bi_ok = dcr_bi <= 1.0
+    else:
+        dcr_bi = f_bi / allow_tens_transfer if allow_tens_transfer > 0 else float("inf")
+        bi_ok = dcr_bi <= 1.0
+
+    # 2. Service Load Stage Stresses (Effective Pe + Service Moments)
+    pe_lb = p_effective_kips * 1000.0
+    m_sust_lb_in = (m_sw_kip_ft + m_dead_kip_ft) * 12000.0
+    m_total_lb_in = (m_sw_kip_ft + m_dead_kip_ft + m_live_kip_ft) * 12000.0
+
+    axial_e = pe_lb / ag_in2
+    prestress_moment_e = (pe_lb * eccentricity_in)
+
+    # Sustained load top fiber stress (Pe + M_sust)
+    f_ts = -axial_e + (prestress_moment_e * yt_in / ig_in4) - (m_sust_lb_in * yt_in / ig_in4)
+    allow_comp_sust = 0.45 * fc_psi
+    dcr_ts = (abs(f_ts) / allow_comp_sust) if f_ts < 0.0 else 0.0
+    ts_ok = dcr_ts <= 1.0
+
+    # Total service load top fiber stress (Pe + M_total)
+    f_tt = -axial_e + (prestress_moment_e * yt_in / ig_in4) - (m_total_lb_in * yt_in / ig_in4)
+    allow_comp_total = 0.60 * fc_psi
+    dcr_tt = (abs(f_tt) / allow_comp_total) if f_tt < 0.0 else 0.0
+    tt_ok = dcr_tt <= 1.0
+
+    # Total service load bottom fiber tension (precompressed tensile zone)
+    f_bt = -axial_e - (prestress_moment_e * yb_in / ig_in4) + (m_total_lb_in * yb_in / ig_in4)
+
+    sqrt_fc = math.sqrt(fc_psi)
+    if b_class in ("class_u", "u"):
+        allow_tens_service = 7.5 * lambda_factor * sqrt_fc
+    elif b_class in ("class_t", "t"):
+        allow_tens_service = 12.0 * lambda_factor * sqrt_fc
+    else:  # class_c
+        allow_tens_service = float("inf")
+
+    if f_bt > 0.0:
+        dcr_bt = f_bt / allow_tens_service if not math.isinf(allow_tens_service) else 0.0
+        bt_ok = dcr_bt <= 1.0
+    else:
+        dcr_bt = (abs(f_bt) / allow_comp_total) if f_bt < 0.0 else 0.0
+        bt_ok = dcr_bt <= 1.0
+
+    all_dcrs = [dcr_ti, dcr_bi, dcr_ts, dcr_tt, dcr_bt]
+    gov_dcr = max(all_dcrs)
+    passed = ti_ok and bi_ok and ts_ok and tt_ok and bt_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "f_ti_psi": round(f_ti, 1),
+        "f_bi_psi": round(f_bi, 1),
+        "f_ts_psi": round(f_ts, 1),
+        "f_tt_psi": round(f_tt, 1),
+        "f_bt_psi": round(f_bt, 1),
+        "allow_comp_transfer_psi": round(allow_comp_transfer, 1),
+        "allow_tens_transfer_psi": round(allow_tens_transfer, 1),
+        "allow_comp_sust_psi": round(allow_comp_sust, 1),
+        "allow_comp_total_psi": round(allow_comp_total, 1),
+        "allow_tens_service_psi": round(allow_tens_service, 1) if not math.isinf(allow_tens_service) else None,
+        "transfer_ok": ti_ok and bi_ok,
+        "service_ok": ts_ok and tt_ok and bt_ok,
+    }
