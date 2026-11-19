@@ -7277,3 +7277,145 @@ def verify_ieee1584_arc_flash_hazard(
         "ppe_adequate": ppe_adequate,
         "extreme_danger": extreme_danger,
     }
+
+
+def verify_generator_motor_starting_voltage_dip(
+    generator_standby_kw: float,
+    generator_power_factor: float = 0.80,
+    subtransient_reactance_xd_pu: float = 0.16,
+    motor_hp: float = 0.0,
+    motor_starting_skva: float = 0.0,
+    nema_code_letter: str = "G",
+    starting_method: str = "across_the_line",
+    base_running_kw: float = 0.0,
+    base_running_pf: float = 0.85,
+    motor_running_kw: float = 0.0,
+    motor_running_pf: float = 0.85,
+    motor_efficiency_pct: float = 90.0,
+    max_voltage_dip_pct: float = 20.0,
+    max_running_loading_pct: float = 100.0,
+) -> Dict[str, Any]:
+    """IEEE 399 Section 9.4 & NFPA 110 generator sizing, locked-rotor inrush, and transient voltage dip check."""
+    scalars = [
+        generator_standby_kw,
+        generator_power_factor,
+        subtransient_reactance_xd_pu,
+        motor_hp,
+        motor_starting_skva,
+        base_running_kw,
+        base_running_pf,
+        motor_running_kw,
+        motor_running_pf,
+        motor_efficiency_pct,
+        max_voltage_dip_pct,
+        max_running_loading_pct,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            generator_standby_kw,
+            generator_power_factor,
+            subtransient_reactance_xd_pu,
+            motor_efficiency_pct,
+            max_voltage_dip_pct,
+            max_running_loading_pct,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_rating_or_efficiency"}
+    if base_running_kw < 0 or motor_running_kw < 0 or motor_hp < 0 or motor_starting_skva < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (motor_hp <= 0.0) and (motor_starting_skva <= 0.0):
+        return {"pass": False, "reason": "missing_motor_starting_input"}
+    if not (0.0 < generator_power_factor <= 1.0) or not (0.0 < base_running_pf <= 1.0) or not (0.0 < motor_running_pf <= 1.0):
+        return {"pass": False, "reason": "invalid_power_factor"}
+    if motor_efficiency_pct > 100.0:
+        return {"pass": False, "reason": "invalid_efficiency"}
+
+    # NEMA Table 430.7(B) maximum kVA/HP limits
+    nema_table: Dict[str, float] = {
+        "A": 3.14, "B": 3.54, "C": 3.99, "D": 4.49, "E": 4.99,
+        "F": 5.59, "G": 6.29, "H": 7.09, "J": 7.99, "K": 8.99,
+        "L": 9.99, "M": 11.19, "N": 12.49, "P": 13.99, "R": 15.99,
+        "S": 17.99, "T": 19.99, "U": 22.39, "V": 24.00,
+    }
+    letter_clean = nema_code_letter.strip().upper()
+    if letter_clean not in nema_table:
+        return {"pass": False, "reason": "invalid_nema_code_letter"}
+
+    # Starting method multipliers on locked-rotor inrush kVA
+    method_clean = starting_method.strip().lower().replace(" ", "_").replace("-", "_")
+    starter_multipliers: Dict[str, float] = {
+        "across_the_line": 1.0,
+        "dol": 1.0,
+        "wye_delta": 0.3333,
+        "star_delta": 0.3333,
+        "autotransformer_80": 0.64,
+        "autotransformer_65": 0.42,
+        "autotransformer_50": 0.25,
+        "solid_state_soft_start": 0.35,
+        "soft_starter": 0.35,
+        "vfd": 0.20,
+    }
+    if method_clean not in starter_multipliers:
+        return {"pass": False, "reason": "invalid_starting_method"}
+
+    starter_factor = starter_multipliers[method_clean]
+
+    # Determine motor starting kVA
+    if motor_starting_skva > 0.0:
+        skva_effective = motor_starting_skva * (starter_factor if starter_factor < 1.0 else 1.0)
+    else:
+        raw_skva = motor_hp * nema_table[letter_clean]
+        skva_effective = raw_skva * starter_factor
+
+    # Generator capacity and short-circuit kVA
+    s_gen_kva = generator_standby_kw / generator_power_factor
+    s_sc_kva = s_gen_kva / subtransient_reactance_xd_pu
+
+    # IEEE 399 Eq. 9-1 transient voltage dip (%)
+    voltage_dip_pct = (skva_effective / (s_sc_kva + skva_effective)) * 100.0
+    dip_dcr = voltage_dip_pct / max_voltage_dip_pct
+    dip_ok = dip_dcr <= 1.0
+
+    # Motor steady-state running load
+    if motor_running_kw > 0.0:
+        p_motor_kw = motor_running_kw
+    else:
+        p_motor_kw = (motor_hp * 0.7457) / (motor_efficiency_pct / 100.0)
+
+    # Total steady-state active and apparent power
+    p_total_kw = base_running_kw + p_motor_kw
+    q_base_kvar = base_running_kw * math.tan(math.acos(base_running_pf)) if base_running_kw > 0.0 else 0.0
+    q_motor_kvar = p_motor_kw * math.tan(math.acos(motor_running_pf)) if p_motor_kw > 0.0 else 0.0
+    q_total_kvar = q_base_kvar + q_motor_kvar
+    s_total_kva = math.sqrt((p_total_kw**2) + (q_total_kvar**2))
+
+    # Running capacity checks
+    max_allowed_kw = generator_standby_kw * (max_running_loading_pct / 100.0)
+    kw_dcr = p_total_kw / max_allowed_kw if max_allowed_kw > 0 else float("inf")
+    kva_dcr = s_total_kva / s_gen_kva if s_gen_kva > 0 else float("inf")
+
+    running_kw_ok = kw_dcr <= 1.0
+    running_kva_ok = kva_dcr <= 1.0
+
+    gov_dcr = max(dip_dcr, kw_dcr, kva_dcr)
+    passed = dip_ok and running_kw_ok and running_kva_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "voltage_dip_pct": round(voltage_dip_pct, 2),
+        "voltage_dip_dcr": round(dip_dcr, 4),
+        "running_kw_dcr": round(kw_dcr, 4),
+        "running_kva_dcr": round(kva_dcr, 4),
+        "motor_starting_skva": round(skva_effective, 2),
+        "generator_base_kva": round(s_gen_kva, 2),
+        "generator_sc_kva": round(s_sc_kva, 2),
+        "total_running_kw": round(p_total_kw, 2),
+        "total_running_kva": round(s_total_kva, 2),
+        "voltage_dip_ok": dip_ok,
+        "running_kw_ok": running_kw_ok,
+        "running_kva_ok": running_kva_ok,
+    }

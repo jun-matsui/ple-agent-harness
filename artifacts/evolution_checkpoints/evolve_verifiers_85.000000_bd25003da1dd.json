@@ -1,0 +1,9 @@
+{
+  "score": 85.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_generator_motor_starting_voltage_dip",
+    "rationale": "Implements IEEE 399 (Brown Book) Section 9.4 and NFPA 110/NEC 700 emergency generator set sizing, NEMA Table 430.7(B) motor locked-rotor kVA, reduced-voltage starting methods, and transient terminal voltage dip gating.",
+    "model": "gemini-3.8-flash"
+  }
+}

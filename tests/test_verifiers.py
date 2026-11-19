@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_generator_motor_starting_voltage_dip,
     verify_ieee1584_arc_flash_hazard,
     verify_aci_prestressed_concrete_stresses,
     verify_aisc_composite_beam_flexure,
@@ -7205,6 +7206,117 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_eq["pass"])
         self.assertEqual(res_inv_eq["reason"], "invalid_equipment_type")
+
+
+    def test_generator_motor_starting_voltage_dip(self) -> None:
+        from harness.verifiers import verify_generator_motor_starting_voltage_dip
+
+        # Standard passing 500 kW generator starting a 100 HP across-the-line motor
+        # 500 kW @ 0.8 PF = 625 kVA; X"d = 0.16 -> S_sc = 3906.25 kVA
+        # 100 HP, Code G (6.29 kVA/HP) -> sKVA = 629.0 kVA
+        # V_dip = 629 / (3906.25 + 629) = 13.87% <= 20.0%
+        res_pass = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=500.0,
+            generator_power_factor=0.80,
+            subtransient_reactance_xd_pu=0.16,
+            motor_hp=100.0,
+            nema_code_letter="G",
+            starting_method="across_the_line",
+            base_running_kw=150.0,
+            max_voltage_dip_pct=20.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["generator_base_kva"], 625.0, places=1)
+        self.assertAlmostEqual(res_pass["generator_sc_kva"], 3906.25, places=1)
+        self.assertAlmostEqual(res_pass["motor_starting_skva"], 629.0, places=1)
+        self.assertAlmostEqual(res_pass["voltage_dip_pct"], 13.87, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["voltage_dip_ok"])
+        self.assertTrue(res_pass["running_kw_ok"])
+        self.assertTrue(res_pass["running_kva_ok"])
+
+        # Soft starter reducing starting inrush and voltage dip
+        res_soft = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=500.0,
+            motor_hp=100.0,
+            starting_method="soft_starter",
+            base_running_kw=150.0,
+        )
+        self.assertTrue(res_soft["pass"])
+        self.assertAlmostEqual(res_soft["motor_starting_skva"], 629.0 * 0.35, places=1)
+        self.assertLess(res_soft["voltage_dip_pct"], res_pass["voltage_dip_pct"])
+
+        # Large motor starting across-the-line failing voltage dip (dip > 20% limit)
+        res_dip_fail = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=300.0,
+            generator_power_factor=0.80,
+            subtransient_reactance_xd_pu=0.16,
+            motor_hp=200.0,
+            nema_code_letter="G",
+            starting_method="across_the_line",
+            max_voltage_dip_pct=20.0,
+        )
+        self.assertFalse(res_dip_fail["pass"])
+        self.assertFalse(res_dip_fail["voltage_dip_ok"])
+        self.assertGreater(res_dip_fail["voltage_dip_pct"], 20.0)
+        self.assertGreater(res_dip_fail["dcr"], 1.0)
+
+        # Running steady-state active power overload failure
+        res_run_fail = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=300.0,
+            motor_hp=100.0,
+            starting_method="vfd",
+            base_running_kw=250.0,
+        )
+        self.assertFalse(res_run_fail["pass"])
+        self.assertFalse(res_run_fail["running_kw_ok"])
+        self.assertGreater(res_run_fail["running_kw_dcr"], 1.0)
+
+        # Explicit starting sKVA parameter override
+        res_skva_direct = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=500.0,
+            motor_starting_skva=500.0,
+            motor_running_kw=60.0,
+        )
+        self.assertTrue(res_skva_direct["pass"])
+        self.assertEqual(res_skva_direct["motor_starting_skva"], 500.0)
+
+        # Input error validation checks
+        res_nan = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=float("nan"),
+            motor_hp=100.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=-500.0,
+            motor_hp=100.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_rating_or_efficiency")
+
+        res_inv_letter = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=500.0,
+            motor_hp=100.0,
+            nema_code_letter="Z",
+        )
+        self.assertFalse(res_inv_letter["pass"])
+        self.assertEqual(res_inv_letter["reason"], "invalid_nema_code_letter")
+
+        res_inv_starter = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=500.0,
+            motor_hp=100.0,
+            starting_method="pneumatic_kickstart",
+        )
+        self.assertFalse(res_inv_starter["pass"])
+        self.assertEqual(res_inv_starter["reason"], "invalid_starting_method")
+
+        res_no_motor = verify_generator_motor_starting_voltage_dip(
+            generator_standby_kw=500.0,
+        )
+        self.assertFalse(res_no_motor["pass"])
+        self.assertEqual(res_no_motor["reason"], "missing_motor_starting_input")
 
 
 if __name__ == "__main__":
