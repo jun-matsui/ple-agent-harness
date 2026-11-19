@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_spangler_pipe_deflection,
     verify_nds_timber_column_compression,
     verify_ashrae15_machinery_room_safety,
     verify_nec_pv_system_string_sizing,
@@ -7922,6 +7923,133 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_c["pass"])
         self.assertEqual(res_inv_c["reason"], "invalid_c_parameter")
+
+
+    def test_spangler_pipe_deflection(self) -> None:
+        from harness.verifiers import verify_spangler_pipe_deflection
+
+        # Standard passing 24-inch PVC flexible gravity sewer pipe under 10 ft cover
+        # Do=24.0 in, t=0.60 in, D_mean=23.4 in, gamma=120 pcf, E'=1000 psi, E_pipe=400,000 psi
+        res_pass = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=24.0,
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=10.0,
+            soil_unit_weight_pcf=120.0,
+            soil_modulus_e_prime_psi=1000.0,
+            pipe_modulus_psi=400000.0,
+            bedding_constant_k=0.10,
+            deflection_lag_factor_dl=1.25,
+            max_deflection_pct=5.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["mean_diameter_in"], 23.4)
+        self.assertAlmostEqual(res_pass["earth_load_lb_per_in"], 200.0, places=1)
+        self.assertAlmostEqual(res_pass["total_load_lb_per_in"], 200.0, places=1)
+        self.assertAlmostEqual(res_pass["soil_stiffness_term_psi"], 61.0, places=1)
+        self.assertAlmostEqual(res_pass["pipe_stiffness_term_psi"], 4.495, places=2)
+        self.assertAlmostEqual(res_pass["deflection_in"], 0.3817, places=2)
+        self.assertAlmostEqual(res_pass["deflection_pct"], 1.631, places=2)
+        self.assertAlmostEqual(res_pass["dcr"], 1.631 / 5.0, places=3)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["deflection_ok"])
+
+        # Direct pipe stiffness input (PS = 46 psi for SDR 35 PVC pipe)
+        res_ps = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=24.0,
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=10.0,
+            pipe_stiffness_ps_psi=46.0,
+            soil_modulus_e_prime_psi=1000.0,
+        )
+        self.assertTrue(res_ps["pass"])
+        self.assertAlmostEqual(res_ps["pipe_stiffness_term_psi"], 0.149 * 46.0, places=2)
+        self.assertLess(res_ps["dcr"], 1.0)
+
+        # Shallow burial under AASHTO HS-20 traffic live loading
+        res_traffic = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=24.0,
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=3.0,
+            traffic_loading="HS-20",
+            soil_modulus_e_prime_psi=1000.0,
+        )
+        self.assertTrue(res_traffic["pass"])
+        self.assertAlmostEqual(res_traffic["earth_load_lb_per_in"], 60.0, places=1)
+        self.assertAlmostEqual(res_traffic["live_load_lb_per_in"], 100.0, places=1)
+        self.assertAlmostEqual(res_traffic["total_load_lb_per_in"], 160.0, places=1)
+        self.assertLess(res_traffic["dcr"], 1.0)
+
+        # Deep burial overload exceeding 5.0% allowable deflection failure
+        res_deep_fail = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=24.0,
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=40.0,
+            soil_unit_weight_pcf=120.0,
+            soil_modulus_e_prime_psi=1000.0,
+            max_deflection_pct=5.0,
+        )
+        self.assertFalse(res_deep_fail["pass"])
+        self.assertFalse(res_deep_fail["deflection_ok"])
+        self.assertGreater(res_deep_fail["deflection_pct"], 5.0)
+        self.assertGreater(res_deep_fail["dcr"], 1.0)
+
+        # Poor sidefill compaction (low E' = 200 psi) triggering deflection failure
+        res_soft_fail = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=24.0,
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=12.0,
+            soil_modulus_e_prime_psi=200.0,
+            max_deflection_pct=5.0,
+        )
+        self.assertFalse(res_soft_fail["pass"])
+        self.assertFalse(res_soft_fail["deflection_ok"])
+        self.assertGreater(res_soft_fail["dcr"], 1.0)
+
+        # Wall thickness exceeding pipe radius error
+        res_thick_err = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=12.0,
+            wall_thickness_in=8.0,
+            depth_of_cover_ft=10.0,
+        )
+        self.assertFalse(res_thick_err["pass"])
+        self.assertEqual(res_thick_err["reason"], "wall_thickness_exceeds_radius")
+
+        # Negative depth of cover error
+        res_depth_err = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=24.0,
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=-5.0,
+        )
+        self.assertFalse(res_depth_err["pass"])
+        self.assertEqual(res_depth_err["reason"], "negative_depth_of_cover")
+
+        # Invalid bedding constant error
+        res_k_err = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=24.0,
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=10.0,
+            bedding_constant_k=0.35,
+        )
+        self.assertFalse(res_k_err["pass"])
+        self.assertEqual(res_k_err["reason"], "invalid_bedding_constant")
+
+        # NaN input validation checks
+        res_nan = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=float("nan"),
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=10.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Non-positive geometry validation checks
+        res_neg = verify_spangler_pipe_deflection(
+            pipe_outer_diameter_in=-24.0,
+            wall_thickness_in=0.60,
+            depth_of_cover_ft=10.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_soil_property")
 
 
 if __name__ == "__main__":

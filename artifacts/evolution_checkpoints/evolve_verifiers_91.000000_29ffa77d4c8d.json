@@ -1,0 +1,9 @@
+{
+  "score": 91.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_spangler_pipe_deflection",
+    "rationale": "Implements the Spangler Modified Iowa Formula (ASTM D2412, ASCE MOP 60/119, AASHTO Section 12) for buried flexible pipe ring deflection under prism earth and AASHTO live loads, closing a crucial Civil/Pipeline PLE verification gap.",
+    "model": "gemini-3.8-flash"
+  }
+}

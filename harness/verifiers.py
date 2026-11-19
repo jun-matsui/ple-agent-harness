@@ -8104,3 +8104,135 @@ def verify_nds_timber_column_compression(
         "slenderness_ok": slenderness_ok,
         "capacity_ok": capacity_ok,
     }
+
+
+def verify_spangler_pipe_deflection(
+    pipe_outer_diameter_in: float,
+    wall_thickness_in: float,
+    depth_of_cover_ft: float,
+    soil_unit_weight_pcf: float = 120.0,
+    soil_modulus_e_prime_psi: float = 1000.0,
+    pipe_modulus_psi: float = 400000.0,
+    pipe_stiffness_ps_psi: float = 0.0,
+    live_load_psf: float = 0.0,
+    traffic_loading: str = "none",
+    bedding_constant_k: float = 0.10,
+    deflection_lag_factor_dl: float = 1.25,
+    max_deflection_pct: float = 5.0,
+) -> Dict[str, Any]:
+    """Spangler Modified Iowa Formula (ASTM D2412 / AASHTO Sec 12) buried flexible pipe deflection gate."""
+    scalars = [
+        pipe_outer_diameter_in,
+        wall_thickness_in,
+        depth_of_cover_ft,
+        soil_unit_weight_pcf,
+        soil_modulus_e_prime_psi,
+        pipe_modulus_psi,
+        pipe_stiffness_ps_psi,
+        live_load_psf,
+        bedding_constant_k,
+        deflection_lag_factor_dl,
+        max_deflection_pct,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            pipe_outer_diameter_in,
+            wall_thickness_in,
+            soil_unit_weight_pcf,
+            soil_modulus_e_prime_psi,
+            max_deflection_pct,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_soil_property"}
+    if depth_of_cover_ft < 0:
+        return {"pass": False, "reason": "negative_depth_of_cover"}
+    if live_load_psf < 0 or pipe_stiffness_ps_psi < 0:
+        return {"pass": False, "reason": "negative_load_or_stiffness"}
+    if wall_thickness_in >= (pipe_outer_diameter_in / 2.0):
+        return {"pass": False, "reason": "wall_thickness_exceeds_radius"}
+    if not (0.05 <= bedding_constant_k <= 0.20):
+        return {"pass": False, "reason": "invalid_bedding_constant"}
+    if deflection_lag_factor_dl < 1.0:
+        return {"pass": False, "reason": "invalid_lag_factor"}
+
+    t_load = traffic_loading.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_traffic = {"none", "hs20", "hs_20", "h20", "h_20"}
+    if t_load not in valid_traffic:
+        return {"pass": False, "reason": "invalid_traffic_loading"}
+
+    # Resolve live load surface pressure (psf)
+    if live_load_psf > 0.0:
+        w_live_psf = live_load_psf
+    elif t_load in ("hs20", "hs_20", "h20", "h_20"):
+        # AASHTO standard equivalent HS-20 live load pressure by depth of cover
+        h = depth_of_cover_ft
+        if h <= 1.0:
+            w_live_psf = 1800.0
+        elif h <= 2.0:
+            w_live_psf = 800.0
+        elif h <= 3.0:
+            w_live_psf = 600.0
+        elif h <= 4.0:
+            w_live_psf = 400.0
+        elif h <= 5.0:
+            w_live_psf = 250.0
+        elif h <= 6.0:
+            w_live_psf = 200.0
+        elif h <= 7.0:
+            w_live_psf = 175.0
+        elif h <= 8.0:
+            w_live_psf = 100.0
+        else:
+            w_live_psf = 0.0
+    else:
+        w_live_psf = 0.0
+
+    # Prism earth load and live load per linear inch of pipe (lb/in)
+    d_o = pipe_outer_diameter_in
+    w_earth_lb_in = (soil_unit_weight_pcf * depth_of_cover_ft * d_o) / 144.0
+    w_live_lb_in = (w_live_psf * d_o) / 144.0
+    w_total_lb_in = w_earth_lb_in + w_live_lb_in
+
+    # Pipe ring stiffness term Sp = EI / r^3 (psi)
+    d_mean = d_o - wall_thickness_in
+    r_mean = d_mean / 2.0
+    if pipe_stiffness_ps_psi > 0.0:
+        # ASTM D2412: PS = F / Delta_y = EI / (0.149 * r^3) -> EI / r^3 = 0.149 * PS
+        sp_psi = 0.149 * pipe_stiffness_ps_psi
+    else:
+        if pipe_modulus_psi <= 0:
+            return {"pass": False, "reason": "non_positive_pipe_modulus"}
+        i_wall = (wall_thickness_in ** 3) / 12.0
+        sp_psi = (pipe_modulus_psi * i_wall) / (r_mean ** 3)
+
+    # Soil reaction stiffness term Ss = 0.061 * E' (psi)
+    ss_psi = 0.061 * soil_modulus_e_prime_psi
+
+    # Spangler's Modified Iowa Formula for horizontal/vertical ring deflection (in)
+    denom = sp_psi + ss_psi
+    delta_x_in = (deflection_lag_factor_dl * bedding_constant_k * w_total_lb_in) / denom
+
+    deflection_pct = (delta_x_in / d_mean) * 100.0
+    allowable_deflection_in = (max_deflection_pct / 100.0) * d_mean
+    dcr = deflection_pct / max_deflection_pct
+
+    deflection_ok = dcr <= 1.0
+    passed = deflection_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "deflection_in": round(delta_x_in, 4),
+        "deflection_pct": round(deflection_pct, 3),
+        "allowable_deflection_in": round(allowable_deflection_in, 4),
+        "total_load_lb_per_in": round(w_total_lb_in, 2),
+        "earth_load_lb_per_in": round(w_earth_lb_in, 2),
+        "live_load_lb_per_in": round(w_live_lb_in, 2),
+        "pipe_stiffness_term_psi": round(sp_psi, 3),
+        "soil_stiffness_term_psi": round(ss_psi, 3),
+        "mean_diameter_in": round(d_mean, 2),
+        "deflection_ok": deflection_ok,
+    }
