@@ -1,0 +1,9 @@
+{
+  "score": 87.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_power_factor_correction_capacitor",
+    "rationale": "Evaluates industrial/commercial power factor correction capacitor banks under NEC 460 and IEEE 141/519, checking required kVAR, achieved PF, NEC 460.8(A) 135% conductor ampacity, percent voltage rise across upstream transformers, and parallel harmonic resonance risk.",
+    "model": "gemini-3.8-flash"
+  }
+}

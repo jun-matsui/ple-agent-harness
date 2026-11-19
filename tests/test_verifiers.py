@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_power_factor_correction_capacitor,
     verify_aci_beam_torsion,
     verify_generator_motor_starting_voltage_dip,
     verify_ieee1584_arc_flash_hazard,
@@ -7438,6 +7439,142 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_cover_err["pass"])
         self.assertEqual(res_cover_err["reason"], "cover_exceeds_section_dimensions")
+
+
+    def test_power_factor_correction_capacitor(self) -> None:
+        from harness.verifiers import verify_power_factor_correction_capacitor
+
+        # Standard passing commercial/industrial power factor correction check
+        # 500 kW, 0.75 PF lagging -> 0.95 PF target at 480V 3-phase with 300 kVAR capacitor bank
+        res_pass = verify_power_factor_correction_capacitor(
+            real_power_kw=500.0,
+            existing_pf=0.75,
+            target_pf=0.95,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=300.0,
+            transformer_kva=1000.0,
+            transformer_impedance_pct=5.75,
+            conductor_ampacity_a=500.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["kvar_required"], 276.61, places=1)
+        self.assertAlmostEqual(res_pass["pf_achieved"], 0.9625, places=3)
+        self.assertFalse(res_pass["is_leading"])
+        self.assertAlmostEqual(res_pass["i_cap_rated_a"], 360.84, places=1)
+        self.assertAlmostEqual(res_pass["min_conductor_ampacity_a"], 487.14, places=1)
+        self.assertAlmostEqual(res_pass["voltage_rise_pct"], 1.725, places=2)
+        self.assertFalse(res_pass["resonance_risk"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["kvar_ok"])
+        self.assertTrue(res_pass["conductor_ok"])
+        self.assertTrue(res_pass["voltage_rise_ok"])
+
+        # Undersized capacitor bank failing target power factor (kVAR < required)
+        res_fail_kvar = verify_power_factor_correction_capacitor(
+            real_power_kw=500.0,
+            existing_pf=0.75,
+            target_pf=0.95,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=250.0,
+        )
+        self.assertFalse(res_fail_kvar["pass"])
+        self.assertFalse(res_fail_kvar["kvar_ok"])
+        self.assertGreater(res_fail_kvar["dcr"], 1.0)
+
+        # Undersized feeder conductor failing NEC 460.8(A) 135% ampacity rule
+        res_fail_conductor = verify_power_factor_correction_capacitor(
+            real_power_kw=500.0,
+            existing_pf=0.75,
+            target_pf=0.95,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=300.0,
+            conductor_ampacity_a=400.0,
+        )
+        self.assertFalse(res_fail_conductor["pass"])
+        self.assertFalse(res_fail_conductor["conductor_ok"])
+        self.assertGreater(res_fail_conductor["conductor_dcr"], 1.0)
+
+        # Excessive steady-state voltage rise failure across small transformer
+        res_fail_voltage = verify_power_factor_correction_capacitor(
+            real_power_kw=300.0,
+            existing_pf=0.70,
+            target_pf=0.92,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=250.0,
+            transformer_kva=350.0,
+            transformer_impedance_pct=5.75,
+            max_voltage_rise_pct=3.0,
+        )
+        self.assertFalse(res_fail_voltage["pass"])
+        self.assertFalse(res_fail_voltage["voltage_rise_ok"])
+        self.assertAlmostEqual(res_fail_voltage["voltage_rise_pct"], (250.0 * 5.75) / 350.0, places=2)
+        self.assertGreater(res_fail_voltage["dcr"], 1.0)
+
+        # Harmonic resonance detection near 5th harmonic (h_r approx 5.0)
+        res_resonance = verify_power_factor_correction_capacitor(
+            real_power_kw=400.0,
+            existing_pf=0.75,
+            target_pf=0.95,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=250.0,
+            transformer_kva=359.375,
+            transformer_impedance_pct=5.75,
+        )
+        self.assertTrue(res_resonance["resonance_risk"])
+        self.assertAlmostEqual(res_resonance["harmonic_order_hr"], 5.0, places=1)
+
+        # Overcorrection resulting in leading power factor without permission
+        res_leading = verify_power_factor_correction_capacitor(
+            real_power_kw=200.0,
+            existing_pf=0.85,
+            target_pf=0.95,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=200.0,
+            allow_leading_pf=False,
+        )
+        self.assertFalse(res_leading["pass"])
+        self.assertTrue(res_leading["is_leading"])
+
+        # Input error validation checks
+        res_nan = verify_power_factor_correction_capacitor(
+            real_power_kw=float("nan"),
+            existing_pf=0.75,
+            target_pf=0.95,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=300.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_power_factor_correction_capacitor(
+            real_power_kw=-500.0,
+            existing_pf=0.75,
+            target_pf=0.95,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=300.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_power_voltage_or_kvar")
+
+        res_pf_inv = verify_power_factor_correction_capacitor(
+            real_power_kw=500.0,
+            existing_pf=0.90,
+            target_pf=0.85,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=300.0,
+        )
+        self.assertFalse(res_pf_inv["pass"])
+        self.assertEqual(res_pf_inv["reason"], "target_pf_must_exceed_existing")
+
+        res_pf_bounds = verify_power_factor_correction_capacitor(
+            real_power_kw=500.0,
+            existing_pf=1.20,
+            target_pf=0.95,
+            system_voltage_v=480.0,
+            capacitor_rated_kvar=300.0,
+        )
+        self.assertFalse(res_pf_bounds["pass"])
+        self.assertEqual(res_pf_bounds["reason"], "power_factor_out_of_bounds")
 
 
 if __name__ == "__main__":

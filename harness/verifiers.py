@@ -7614,3 +7614,128 @@ def verify_aci_beam_torsion(
         "transverse_ok": transverse_ok,
         "longitudinal_ok": longitudinal_ok,
     }
+
+
+def verify_power_factor_correction_capacitor(
+    real_power_kw: float,
+    existing_pf: float,
+    target_pf: float,
+    system_voltage_v: float,
+    capacitor_rated_kvar: float,
+    transformer_kva: float = 0.0,
+    transformer_impedance_pct: float = 5.75,
+    conductor_ampacity_a: float = 0.0,
+    three_phase: bool = True,
+    max_voltage_rise_pct: float = 3.0,
+    allow_leading_pf: bool = False,
+) -> Dict[str, Any]:
+    """NEC Article 460 & IEEE 141/519 power factor correction capacitor bank sizing, ampacity, and resonance gate."""
+    scalars = [
+        real_power_kw,
+        existing_pf,
+        target_pf,
+        system_voltage_v,
+        capacitor_rated_kvar,
+        transformer_kva,
+        transformer_impedance_pct,
+        conductor_ampacity_a,
+        max_voltage_rise_pct,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(real_power_kw, system_voltage_v, capacitor_rated_kvar) <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_power_voltage_or_kvar"}
+    if not (0.0 < existing_pf <= 1.0) or not (0.0 < target_pf <= 1.0):
+        return {"pass": False, "reason": "power_factor_out_of_bounds"}
+    if target_pf <= existing_pf:
+        return {"pass": False, "reason": "target_pf_must_exceed_existing"}
+    if (
+        transformer_kva < 0
+        or transformer_impedance_pct < 0
+        or conductor_ampacity_a < 0
+        or max_voltage_rise_pct <= 0
+    ):
+        return {"pass": False, "reason": "negative_parameter_or_invalid_limit"}
+
+    # Required kVAR to improve from existing PF to target PF: Q_req = P * (tan(theta1) - tan(theta2))
+    theta1 = math.acos(existing_pf)
+    theta2 = math.acos(target_pf)
+    kvar_required = real_power_kw * (math.tan(theta1) - math.tan(theta2))
+
+    kvar_dcr = kvar_required / capacitor_rated_kvar if capacitor_rated_kvar > 0 else float("inf")
+    kvar_ok = kvar_dcr <= 1.0
+
+    # Uncorrected and corrected operating states
+    s_initial_kva = real_power_kw / existing_pf
+    q_initial_kvar = real_power_kw * math.tan(theta1)
+    q_corrected_kvar = q_initial_kvar - capacitor_rated_kvar
+    is_leading = q_corrected_kvar < 0.0
+
+    s_corrected_kva = math.sqrt(real_power_kw**2 + q_corrected_kvar**2)
+    pf_achieved = real_power_kw / s_corrected_kva if s_corrected_kva > 0 else 1.0
+    kva_released = max(0.0, s_initial_kva - s_corrected_kva)
+
+    leading_ok = allow_leading_pf or (not is_leading)
+
+    # NEC 460.8(A) Conductor Ampacity: not less than 135% of capacitor rated current
+    if three_phase:
+        i_cap_rated_a = (capacitor_rated_kvar * 1000.0) / (math.sqrt(3.0) * system_voltage_v)
+    else:
+        i_cap_rated_a = (capacitor_rated_kvar * 1000.0) / system_voltage_v
+
+    min_conductor_ampacity_a = 1.35 * i_cap_rated_a
+    conductor_ok = True
+    conductor_dcr = None
+    if conductor_ampacity_a > 0.0:
+        conductor_dcr = min_conductor_ampacity_a / conductor_ampacity_a
+        conductor_ok = conductor_dcr <= 1.0
+
+    # Approximate steady-state voltage rise across transformer (IEEE 141 Eq. 8-1)
+    voltage_rise_pct = None
+    voltage_rise_ok = True
+    voltage_rise_dcr = None
+    if transformer_kva > 0.0 and transformer_impedance_pct > 0.0:
+        voltage_rise_pct = (capacitor_rated_kvar * transformer_impedance_pct) / transformer_kva
+        voltage_rise_dcr = voltage_rise_pct / max_voltage_rise_pct
+        voltage_rise_ok = voltage_rise_dcr <= 1.0
+
+    # Parallel harmonic resonant frequency order h_r = sqrt(kVA_sc / kVAR_cap) (IEEE 519 / IEEE 141)
+    harmonic_order_hr = None
+    resonance_risk = False
+    if transformer_kva > 0.0 and transformer_impedance_pct > 0.0:
+        h_r = math.sqrt((transformer_kva * 100.0) / (transformer_impedance_pct * capacitor_rated_kvar))
+        harmonic_order_hr = round(h_r, 2)
+        # Proximity to major power harmonic orders (3, 5, 7, 9, 11, 13)
+        for n in (3, 5, 7, 9, 11, 13):
+            if abs(h_r - float(n)) <= 0.30:
+                resonance_risk = True
+                break
+
+    dcr_candidates = [kvar_dcr]
+    if conductor_dcr is not None:
+        dcr_candidates.append(conductor_dcr)
+    if voltage_rise_dcr is not None:
+        dcr_candidates.append(voltage_rise_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = kvar_ok and conductor_ok and voltage_rise_ok and leading_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "kvar_required": round(kvar_required, 2),
+        "capacitor_rated_kvar": round(capacitor_rated_kvar, 2),
+        "pf_achieved": round(pf_achieved, 4),
+        "is_leading": is_leading,
+        "kva_released": round(kva_released, 2),
+        "i_cap_rated_a": round(i_cap_rated_a, 2),
+        "min_conductor_ampacity_a": round(min_conductor_ampacity_a, 2),
+        "conductor_dcr": round(conductor_dcr, 4) if conductor_dcr is not None else None,
+        "voltage_rise_pct": round(voltage_rise_pct, 3) if voltage_rise_pct is not None else None,
+        "harmonic_order_hr": harmonic_order_hr,
+        "resonance_risk": resonance_risk,
+        "kvar_ok": kvar_ok,
+        "conductor_ok": conductor_ok,
+        "voltage_rise_ok": voltage_rise_ok,
+    }
