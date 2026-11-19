@@ -5757,3 +5757,125 @@ def verify_ite_signal_clearance_intervals(
         "red_ok": red_ok,
         "ped_ok": ped_ok,
     }
+
+
+def verify_aci_anchor_bolt_tension(
+    nu_kips: float,
+    anchor_dia_in: float,
+    hef_in: float,
+    edge_distance_in: float,
+    fc_psi: float,
+    futa_ksi: float = 58.0,
+    anchor_type: str = "cast_in_headed",
+    is_cracked_concrete: bool = True,
+    bearing_area_sqin: float = 0.0,
+    phi_steel: float = 0.75,
+    phi_concrete: float = 0.70,
+) -> Dict[str, Any]:
+    """ACI 318-19 Chapter 17 LRFD tensile strength check for anchors in concrete (steel rupture, breakout, pullout)."""
+    scalars = [
+        nu_kips,
+        anchor_dia_in,
+        hef_in,
+        edge_distance_in,
+        fc_psi,
+        futa_ksi,
+        bearing_area_sqin,
+        phi_steel,
+        phi_concrete,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if nu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(
+            anchor_dia_in,
+            hef_in,
+            edge_distance_in,
+            fc_psi,
+            futa_ksi,
+            phi_steel,
+            phi_concrete,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if bearing_area_sqin < 0:
+        return {"pass": False, "reason": "negative_bearing_area"}
+
+    atype = anchor_type.strip().lower().replace(" ", "_").replace("-", "_")
+    if atype not in ("cast_in_headed", "post_installed"):
+        return {"pass": False, "reason": "invalid_anchor_type"}
+
+    # 1. Steel strength in tension (ACI 318-19 Section 17.6.1)
+    threads_per_inch: Dict[float, float] = {
+        0.50: 13.0,
+        0.625: 11.0,
+        0.75: 10.0,
+        0.875: 9.0,
+        1.00: 8.0,
+        1.125: 7.0,
+        1.25: 7.0,
+        1.50: 6.0,
+    }
+    if anchor_dia_in in threads_per_inch:
+        n_t = threads_per_inch[anchor_dia_in]
+        ase_n = (math.pi / 4.0) * ((anchor_dia_in - (0.9743 / n_t)) ** 2)
+    else:
+        ase_n = 0.75 * (math.pi * (anchor_dia_in**2)) / 4.0
+
+    nsa_kips = ase_n * futa_ksi
+    phi_nsa = phi_steel * nsa_kips
+
+    # 2. Concrete breakout strength in tension (ACI 318-19 Section 17.6.2)
+    kc = 24.0 if atype == "cast_in_headed" else 17.0
+    lambda_a = 1.0
+    nb_kips = (kc * lambda_a * math.sqrt(fc_psi) * (hef_in**1.5)) / 1000.0
+
+    anco = 9.0 * (hef_in**2)
+    c_crit = 1.5 * hef_in
+    if edge_distance_in < c_crit:
+        anc = (c_crit + edge_distance_in) * (3.0 * hef_in)
+        psi_ed_n = 0.70 + 0.30 * (edge_distance_in / c_crit)
+    else:
+        anc = anco
+        psi_ed_n = 1.0
+
+    if is_cracked_concrete:
+        psi_c_n = 1.0
+    else:
+        psi_c_n = 1.25 if atype == "cast_in_headed" else 1.40
+
+    ncb_kips = (anc / anco) * psi_ed_n * psi_c_n * nb_kips
+    phi_ncb = phi_concrete * ncb_kips
+
+    # 3. Pullout strength in tension (ACI 318-19 Section 17.6.3)
+    abr = bearing_area_sqin if bearing_area_sqin > 0.0 else (0.85 * (anchor_dia_in**2))
+    np_lb = 8.0 * abr * fc_psi
+    psi_c_p = 1.0 if is_cracked_concrete else 1.40
+    npn_kips = (psi_c_p * np_lb) / 1000.0
+    phi_npn = phi_concrete * npn_kips
+
+    caps: Dict[str, float] = {
+        "steel_tension": phi_nsa,
+        "concrete_breakout": phi_ncb,
+        "concrete_pullout": phi_npn,
+    }
+    gov_state = min(caps, key=caps.get)
+    phi_nn_kips = caps[gov_state]
+
+    dcr = nu_kips / phi_nn_kips if phi_nn_kips > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "phi_nn_kips": round(phi_nn_kips, 2),
+        "phi_nsa_kips": round(phi_nsa, 2),
+        "phi_ncb_kips": round(phi_ncb, 2),
+        "phi_npn_kips": round(phi_npn, 2),
+        "nb_kips": round(nb_kips, 2),
+        "anc_sqin": round(anc, 2),
+        "governing_limit_state": gov_state,
+    }

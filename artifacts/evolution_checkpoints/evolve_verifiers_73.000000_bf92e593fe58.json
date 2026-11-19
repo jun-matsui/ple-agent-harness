@@ -1,0 +1,9 @@
+{
+  "score": 73.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_anchor_bolt_tension",
+    "rationale": "Implements ACI 318-19 Chapter 17 anchorage-to-concrete tensile strength verification, evaluating steel tensile rupture, concrete breakout with edge-effect and cracking factors, and head pullout capacity.",
+    "model": "gemini-3.8-flash"
+  }
+}

@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_anchor_bolt_tension,
     verify_ite_signal_clearance_intervals,
     verify_nec_transformer_overcurrent_protection,
     verify_aci_corbel_capacity,
@@ -5608,6 +5609,105 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_limits["pass"])
         self.assertEqual(res_inv_limits["reason"], "invalid_yellow_limits")
+
+
+    def test_aci_anchor_bolt_tension(self) -> None:
+        from harness.verifiers import verify_aci_anchor_bolt_tension
+
+        # Passing cast-in anchor where steel tension governs due to heavy bearing plate
+        res_pass = verify_aci_anchor_bolt_tension(
+            nu_kips=12.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_in=12.0,
+            fc_psi=4000.0,
+            futa_ksi=58.0,
+            bearing_area_sqin=1.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["governing_limit_state"], "steel_tension")
+        self.assertAlmostEqual(res_pass["phi_nsa_kips"], 14.55, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Edge-distance reduced breakout governing
+        res_breakout = verify_aci_anchor_bolt_tension(
+            nu_kips=8.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_in=4.5,
+            fc_psi=4000.0,
+            bearing_area_sqin=2.0,
+        )
+        self.assertTrue(res_breakout["pass"])
+        self.assertEqual(res_breakout["governing_limit_state"], "concrete_breakout")
+        self.assertAlmostEqual(res_breakout["phi_ncb_kips"], 9.95, places=1)
+
+        # Default head pullout governing
+        res_pullout = verify_aci_anchor_bolt_tension(
+            nu_kips=9.0,
+            anchor_dia_in=0.75,
+            hef_in=7.0,
+            edge_distance_in=15.0,
+            fc_psi=3500.0,
+        )
+        self.assertTrue(res_pullout["pass"])
+        self.assertEqual(res_pullout["governing_limit_state"], "concrete_pullout")
+
+        # Tension overload failure
+        res_fail = verify_aci_anchor_bolt_tension(
+            nu_kips=20.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_in=12.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Uncracked concrete strength enhancement
+        res_uncracked = verify_aci_anchor_bolt_tension(
+            nu_kips=10.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_in=12.0,
+            fc_psi=4000.0,
+            is_cracked_concrete=False,
+            bearing_area_sqin=2.0,
+        )
+        self.assertTrue(res_uncracked["pass"])
+        self.assertGreater(res_uncracked["phi_ncb_kips"], res_pass["phi_ncb_kips"])
+
+        # Input error validation checks
+        res_nan = verify_aci_anchor_bolt_tension(
+            nu_kips=float("nan"),
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_in=12.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_anchor_bolt_tension(
+            nu_kips=-5.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_in=12.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_inv_type = verify_aci_anchor_bolt_tension(
+            nu_kips=10.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_in=12.0,
+            fc_psi=4000.0,
+            anchor_type="epoxy_adhesive_grout",
+        )
+        self.assertFalse(res_inv_type["pass"])
+        self.assertEqual(res_inv_type["reason"], "invalid_anchor_type")
 
 
 if __name__ == "__main__":
