@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_wastewater_clarifier_sizing,
     verify_hcm_freeway_level_of_service,
     verify_nfpa54_fuel_gas_pipe_sizing,
     verify_nec_multimotor_feeder_sizing,
@@ -8570,6 +8571,107 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_nan["pass"])
         self.assertEqual(res_nan["reason"], "nan_input")
+
+
+    def test_wastewater_clarifier_sizing(self) -> None:
+        from harness.verifiers import verify_wastewater_clarifier_sizing
+
+        # Standard passing 80-ft secondary clarifier under Ten States Standards
+        # Area ~ 5026.5 sqft, Q_peak=5.0 MGD -> SOR = 994.7 gpd/sqft <= 1200
+        # Q_ras=2.0 MGD, MLSS=3000 mg/L -> SLR = 34.84 lb/day-sqft <= 35.0
+        # Peripheral weir Lw ~ 251.3 ft -> WLR = 19894 gpd/ft <= 20000
+        # SWD = 14 ft >= 12 ft. Q_avg = 2.0 MGD -> HRT = 6.32 hrs >= 2.0 hrs
+        res_pass = verify_wastewater_clarifier_sizing(
+            q_peak_mgd=5.0,
+            diameter_ft=80.0,
+            side_water_depth_ft=14.0,
+            q_avg_mgd=2.0,
+            q_ras_mgd=2.0,
+            mlss_mg_per_l=3000.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["surface_area_sqft"], 5026.5, places=1)
+        self.assertAlmostEqual(res_pass["sor_peak_gpd_sqft"], 994.72, places=1)
+        self.assertAlmostEqual(res_pass["slr_peak_lb_day_sqft"], 34.84, places=2)
+        self.assertAlmostEqual(res_pass["wlr_peak_gpd_ft"], 19894.37, places=0)
+        self.assertAlmostEqual(res_pass["hrt_hours"], 6.32, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["sor_ok"])
+        self.assertTrue(res_pass["slr_ok"])
+        self.assertTrue(res_pass["wlr_ok"])
+        self.assertTrue(res_pass["swd_ok"])
+        self.assertTrue(res_pass["hrt_ok"])
+
+        # Peak surface overflow rate exceeded failure (SOR > 1200 gpd/sqft)
+        res_sor_fail = verify_wastewater_clarifier_sizing(
+            q_peak_mgd=6.5,
+            diameter_ft=80.0,
+            side_water_depth_ft=14.0,
+        )
+        self.assertFalse(res_sor_fail["pass"])
+        self.assertFalse(res_sor_fail["sor_ok"])
+        self.assertGreater(res_sor_fail["sor_dcr"], 1.0)
+
+        # Peak solids loading rate exceeded failure (SLR > 35 lb/day-sqft due to high MLSS)
+        res_slr_fail = verify_wastewater_clarifier_sizing(
+            q_peak_mgd=5.0,
+            diameter_ft=80.0,
+            side_water_depth_ft=14.0,
+            q_ras_mgd=2.0,
+            mlss_mg_per_l=3500.0,
+        )
+        self.assertFalse(res_slr_fail["pass"])
+        self.assertFalse(res_slr_fail["slr_ok"])
+        self.assertGreater(res_slr_fail["slr_dcr"], 1.0)
+
+        # Shallow clarifier failing minimum side water depth (SWD < 12 ft)
+        res_swd_fail = verify_wastewater_clarifier_sizing(
+            q_peak_mgd=4.0,
+            diameter_ft=80.0,
+            side_water_depth_ft=10.0,
+            min_swd_ft=12.0,
+        )
+        self.assertFalse(res_swd_fail["pass"])
+        self.assertFalse(res_swd_fail["swd_ok"])
+        self.assertGreater(res_swd_fail["swd_dcr"], 1.0)
+
+        # Hydraulic retention time failure at elevated average flow
+        res_hrt_fail = verify_wastewater_clarifier_sizing(
+            q_peak_mgd=5.0,
+            diameter_ft=80.0,
+            side_water_depth_ft=14.0,
+            q_avg_mgd=4.5,
+            min_hrt_hours=3.5,
+        )
+        self.assertFalse(res_hrt_fail["pass"])
+        self.assertFalse(res_hrt_fail["hrt_ok"])
+
+        # Average flow exceeding peak flow error
+        res_flow_err = verify_wastewater_clarifier_sizing(
+            q_peak_mgd=4.0,
+            diameter_ft=80.0,
+            side_water_depth_ft=14.0,
+            q_avg_mgd=5.0,
+        )
+        self.assertFalse(res_flow_err["pass"])
+        self.assertEqual(res_flow_err["reason"], "average_flow_exceeds_peak")
+
+        # Input error validation checks
+        res_nan = verify_wastewater_clarifier_sizing(
+            q_peak_mgd=float("nan"),
+            diameter_ft=80.0,
+            side_water_depth_ft=14.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_wastewater_clarifier_sizing(
+            q_peak_mgd=-5.0,
+            diameter_ft=80.0,
+            side_water_depth_ft=14.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_flow")
 
 
 if __name__ == "__main__":

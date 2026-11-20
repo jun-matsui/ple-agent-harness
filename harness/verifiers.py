@@ -8899,3 +8899,123 @@ def verify_hcm_freeway_level_of_service(
         "capacity_ok": capacity_ok,
         "los_ok": los_ok,
     }
+
+
+def verify_wastewater_clarifier_sizing(
+    q_peak_mgd: float,
+    diameter_ft: float,
+    side_water_depth_ft: float,
+    q_avg_mgd: float = 0.0,
+    q_ras_mgd: float = 0.0,
+    mlss_mg_per_l: float = 3000.0,
+    weir_length_ft: float = 0.0,
+    max_peak_sor_gpd_per_sqft: float = 1200.0,
+    max_peak_slr_lb_per_day_sqft: float = 35.0,
+    max_weir_loading_gpd_per_ft: float = 20000.0,
+    min_hrt_hours: float = 2.0,
+    min_swd_ft: float = 12.0,
+) -> Dict[str, Any]:
+    """Ten States Standards (GLUMRB) & Metcalf & Eddy circular secondary clarifier sizing and loading gate."""
+    scalars = [
+        q_peak_mgd,
+        diameter_ft,
+        side_water_depth_ft,
+        q_avg_mgd,
+        q_ras_mgd,
+        mlss_mg_per_l,
+        weir_length_ft,
+        max_peak_sor_gpd_per_sqft,
+        max_peak_slr_lb_per_day_sqft,
+        max_weir_loading_gpd_per_ft,
+        min_hrt_hours,
+        min_swd_ft,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if min(q_peak_mgd, diameter_ft, side_water_depth_ft) <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_flow"}
+    if (
+        min(
+            max_peak_sor_gpd_per_sqft,
+            max_peak_slr_lb_per_day_sqft,
+            max_weir_loading_gpd_per_ft,
+            min_hrt_hours,
+            min_swd_ft,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_design_limit"}
+    if (
+        q_avg_mgd < 0
+        or q_ras_mgd < 0
+        or mlss_mg_per_l < 0
+        or weir_length_ft < 0
+    ):
+        return {"pass": False, "reason": "negative_parameter_input"}
+    if q_avg_mgd > 0.0 and q_avg_mgd > q_peak_mgd:
+        return {"pass": False, "reason": "average_flow_exceeds_peak"}
+
+    # Surface area and volume geometry
+    area_sqft = (math.pi * (diameter_ft**2)) / 4.0
+    volume_cuft = area_sqft * side_water_depth_ft
+    volume_gal = volume_cuft * 7.48051948
+
+    # 1. Peak Surface Overflow Rate (SOR, gpd/sqft)
+    q_peak_gpd = q_peak_mgd * 1000000.0
+    sor_peak = q_peak_gpd / area_sqft
+    sor_dcr = sor_peak / max_peak_sor_gpd_per_sqft
+    sor_ok = sor_dcr <= 1.0
+
+    # 2. Peak Solids Loading Rate (SLR, lb/day-sqft)
+    q_solids_mgd = q_peak_mgd + q_ras_mgd
+    solids_lb_per_day = q_solids_mgd * mlss_mg_per_l * 8.34
+    slr_peak = solids_lb_per_day / area_sqft
+    slr_dcr = slr_peak / max_peak_slr_lb_per_day_sqft
+    slr_ok = slr_dcr <= 1.0
+
+    # 3. Peak Weir Loading Rate (WLR, gpd/linear ft)
+    lw = weir_length_ft if weir_length_ft > 0.0 else (math.pi * diameter_ft)
+    wlr = q_peak_gpd / lw
+    wlr_dcr = wlr / max_weir_loading_gpd_per_ft
+    wlr_ok = wlr_dcr <= 1.0
+
+    # 4. Side Water Depth (SWD) check
+    swd_dcr = min_swd_ft / side_water_depth_ft
+    swd_ok = side_water_depth_ft >= min_swd_ft
+
+    # 5. Hydraulic Retention Time (HRT, hours) at average flow
+    hrt_hours = None
+    hrt_dcr = None
+    hrt_ok = True
+    if q_avg_mgd > 0.0:
+        q_avg_gph = (q_avg_mgd * 1000000.0) / 24.0
+        hrt_hours = volume_gal / q_avg_gph
+        hrt_dcr = min_hrt_hours / hrt_hours if hrt_hours > 0 else float("inf")
+        hrt_ok = hrt_dcr <= 1.0
+
+    dcr_candidates = [sor_dcr, slr_dcr, wlr_dcr, swd_dcr]
+    if hrt_dcr is not None:
+        dcr_candidates.append(hrt_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = sor_ok and slr_ok and wlr_ok and swd_ok and hrt_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "sor_peak_gpd_sqft": round(sor_peak, 2),
+        "slr_peak_lb_day_sqft": round(slr_peak, 2),
+        "wlr_peak_gpd_ft": round(wlr, 2),
+        "hrt_hours": round(hrt_hours, 2) if hrt_hours is not None else None,
+        "surface_area_sqft": round(area_sqft, 1),
+        "volume_gal": round(volume_gal, 1),
+        "sor_dcr": round(sor_dcr, 4),
+        "slr_dcr": round(slr_dcr, 4),
+        "wlr_dcr": round(wlr_dcr, 4),
+        "swd_dcr": round(swd_dcr, 4),
+        "hrt_dcr": round(hrt_dcr, 4) if hrt_dcr is not None else None,
+        "sor_ok": sor_ok,
+        "slr_ok": slr_ok,
+        "wlr_ok": wlr_ok,
+        "swd_ok": swd_ok,
+        "hrt_ok": hrt_ok,
+    }

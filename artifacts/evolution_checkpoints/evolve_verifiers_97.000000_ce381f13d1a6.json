@@ -1,0 +1,9 @@
+{
+  "score": 97.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_wastewater_clarifier_sizing",
+    "rationale": "Implements Ten States Standards (GLUMRB) and Metcalf & Eddy wastewater secondary clarifier sizing gates, verifying peak surface overflow rate (SOR), peak solids loading rate (SLR), weir loading rate (WLR), hydraulic retention time (HRT), and side water depth (SWD).",
+    "model": "gemini-3.8-flash"
+  }
+}
