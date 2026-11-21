@@ -1,0 +1,9 @@
+{
+  "score": 100.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_tms402_masonry_shear_wall",
+    "rationale": "Implements TMS 402/602 Chapter 9 (Strength Design of Reinforced Masonry) and IBC Section 2106 in-plane shear wall capacity, filling the missing masonry structural code gate alongside AISC steel, ACI concrete, and NDS timber.",
+    "model": "gemini-3.8-flash"
+  }
+}

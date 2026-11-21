@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_tms402_masonry_shear_wall,
     verify_conductor_short_circuit_withstand,
     verify_activated_sludge_aeration_basin,
     verify_wastewater_clarifier_sizing,
@@ -8881,6 +8882,119 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_fault_current")
+
+
+    def test_tms402_masonry_shear_wall(self) -> None:
+        from harness.verifiers import verify_tms402_masonry_shear_wall
+
+        # Standard passing 8" CMU shear wall with shear reinforcement
+        # L = 16 ft (dv = 192 in), H = 10 ft, t = 7.625 in, An = 1464 in2, f'm = 2000 psi, Pu = 30 kips
+        # Vu = 180 kips, #4 bars @ 24" o.c. (Av = 0.20 in2, s = 24 in)
+        res_pass = verify_tms402_masonry_shear_wall(
+            vu_kips=180.0,
+            wall_length_ft=16.0,
+            wall_height_ft=10.0,
+            wall_thickness_in=7.625,
+            pu_kips=30.0,
+            fm_psi=2000.0,
+            av_in2=0.20,
+            spacing_in=24.0,
+            fy_psi=60000.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["shear_span_ratio"], 0.625, places=3)
+        self.assertAlmostEqual(res_pass["v_nm_kips"], 197.78, places=1)
+        self.assertAlmostEqual(res_pass["v_ns_kips"], 48.0, places=1)
+        self.assertAlmostEqual(res_pass["vn_kips"], 245.78, places=1)
+        self.assertAlmostEqual(res_pass["phi_vn_kips"], 196.62, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 180.0 / 196.624, places=3)
+        self.assertTrue(res_pass["shear_rebar_required"])
+        self.assertTrue(res_pass["capacity_ok"])
+        self.assertTrue(res_pass["detailing_ok"])
+        self.assertEqual(res_pass["governing_limit_state"], "masonry_plus_steel")
+
+        # Low shear condition where masonry alone carries the load without rebar
+        res_masonry_alone = verify_tms402_masonry_shear_wall(
+            vu_kips=50.0,
+            wall_length_ft=16.0,
+            wall_height_ft=10.0,
+            wall_thickness_in=7.625,
+            pu_kips=20.0,
+        )
+        self.assertTrue(res_masonry_alone["pass"])
+        self.assertFalse(res_masonry_alone["shear_rebar_required"])
+        self.assertEqual(res_masonry_alone["governing_limit_state"], "masonry_alone")
+        self.assertLess(res_masonry_alone["dcr"], 1.0)
+
+        # Shear demand exceeding capacity failure (DCR > 1.0)
+        res_overload = verify_tms402_masonry_shear_wall(
+            vu_kips=220.0,
+            wall_length_ft=16.0,
+            wall_height_ft=10.0,
+            wall_thickness_in=7.625,
+            pu_kips=30.0,
+            av_in2=0.20,
+            spacing_in=24.0,
+        )
+        self.assertFalse(res_overload["pass"])
+        self.assertFalse(res_overload["capacity_ok"])
+        self.assertGreater(res_overload["dcr"], 1.0)
+
+        # Shear reinforcement required but omitted failure
+        res_missing_rebar = verify_tms402_masonry_shear_wall(
+            vu_kips=180.0,
+            wall_length_ft=16.0,
+            wall_height_ft=10.0,
+            wall_thickness_in=7.625,
+            pu_kips=30.0,
+        )
+        self.assertFalse(res_missing_rebar["pass"])
+        self.assertTrue(res_missing_rebar["shear_rebar_required"])
+        self.assertFalse(res_missing_rebar["detailing_ok"])
+
+        # Transverse bar spacing exceeding code maximum allowable (s > min(dv/2, 48 in))
+        res_spacing_fail = verify_tms402_masonry_shear_wall(
+            vu_kips=170.0,
+            wall_length_ft=16.0,
+            wall_height_ft=10.0,
+            wall_thickness_in=7.625,
+            pu_kips=30.0,
+            av_in2=0.40,
+            spacing_in=52.0,
+        )
+        self.assertFalse(res_spacing_fail["pass"])
+        self.assertFalse(res_spacing_fail["detailing_ok"])
+        self.assertEqual(res_spacing_fail["s_max_in"], 48.0)
+
+        # Net area exceeding gross area error
+        res_an_err = verify_tms402_masonry_shear_wall(
+            vu_kips=50.0,
+            wall_length_ft=10.0,
+            wall_height_ft=10.0,
+            wall_thickness_in=7.625,
+            an_sqin=1200.0,
+        )
+        self.assertFalse(res_an_err["pass"])
+        self.assertEqual(res_an_err["reason"], "net_area_exceeds_gross_area")
+
+        # Input error validation checks
+        res_nan = verify_tms402_masonry_shear_wall(
+            vu_kips=float("nan"),
+            wall_length_ft=16.0,
+            wall_height_ft=10.0,
+            wall_thickness_in=7.625,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_tms402_masonry_shear_wall(
+            vu_kips=-50.0,
+            wall_length_ft=16.0,
+            wall_height_ft=10.0,
+            wall_thickness_in=7.625,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
 
 
 if __name__ == "__main__":

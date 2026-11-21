@@ -9234,3 +9234,135 @@ def verify_conductor_short_circuit_withstand(
         "conductor_material": mat_norm,
         "insulation_type": ins_norm,
     }
+
+
+def verify_tms402_masonry_shear_wall(
+    vu_kips: float,
+    wall_length_ft: float,
+    wall_height_ft: float,
+    wall_thickness_in: float,
+    mu_kip_ft: float = 0.0,
+    pu_kips: float = 0.0,
+    an_sqin: float = 0.0,
+    fm_psi: float = 2000.0,
+    av_in2: float = 0.0,
+    spacing_in: float = 0.0,
+    fy_psi: float = 60000.0,
+    phi: float = 0.80,
+) -> Dict[str, Any]:
+    """TMS 402-16 / IBC 2106 Chapter 9 Strength Design in-plane reinforced masonry shear wall capacity gate."""
+    scalars = [
+        vu_kips,
+        wall_length_ft,
+        wall_height_ft,
+        wall_thickness_in,
+        mu_kip_ft,
+        pu_kips,
+        an_sqin,
+        fm_psi,
+        av_in2,
+        spacing_in,
+        fy_psi,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if vu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(wall_length_ft, wall_height_ft, wall_thickness_in, fm_psi, fy_psi, phi)
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if mu_kip_ft < 0:
+        return {"pass": False, "reason": "negative_moment_input"}
+    if pu_kips < 0:
+        return {"pass": False, "reason": "negative_axial_load"}
+    if av_in2 < 0 or spacing_in < 0:
+        return {"pass": False, "reason": "negative_reinforcement_parameter"}
+
+    dv_in = wall_length_ft * 12.0
+    ag_sqin = dv_in * wall_thickness_in
+    if an_sqin > 0.0:
+        if an_sqin > ag_sqin:
+            return {"pass": False, "reason": "net_area_exceeds_gross_area"}
+        an_eff = an_sqin
+    else:
+        an_eff = ag_sqin
+
+    # Resolve factored overturning moment Mu if not explicitly specified
+    mu_eff_kip_ft = mu_kip_ft if mu_kip_ft > 0.0 else (vu_kips * wall_height_ft)
+
+    # TMS 402 Section 9.3.4.1.2: M / (V * dv) clamped between 0.25 and 1.0
+    if vu_kips > 0.0 and dv_in > 0.0:
+        raw_ratio = (mu_eff_kip_ft * 12.0) / (vu_kips * dv_in)
+        shear_span_ratio = max(0.25, min(raw_ratio, 1.0))
+    else:
+        raw_ratio = 1.0
+        shear_span_ratio = 1.0
+
+    # TMS 402 Section 9.1.9.1: sqrt(f'm) shall not exceed 100 psi
+    sqrt_fm = min(math.sqrt(fm_psi), 100.0)
+
+    # TMS 402 Eq. 9-18: Nominal masonry shear strength Vnm (lb -> kips)
+    pu_lb = pu_kips * 1000.0
+    v_nm_lb = (4.0 - 1.75 * shear_span_ratio) * an_eff * sqrt_fm + 0.25 * pu_lb
+    v_nm_kips = max(0.0, v_nm_lb / 1000.0)
+    phi_v_nm_kips = phi * v_nm_kips
+
+    # TMS 402 Section 9.1.9.3.1: maximum fy for shear reinforcement is 60,000 psi
+    fy_eff = min(fy_psi, 60000.0)
+
+    # TMS 402 Eq. 9-23: Nominal steel shear strength Vns
+    if av_in2 > 0.0 and spacing_in > 0.0:
+        v_ns_lb = 0.5 * (av_in2 / spacing_in) * fy_eff * dv_in
+        v_ns_kips = v_ns_lb / 1000.0
+    else:
+        v_ns_kips = 0.0
+
+    # TMS 402 Section 9.3.4.1.2: Maximum nominal shear strength Vn_max
+    coeff_max = 6.0 - 2.0 * ((shear_span_ratio - 0.25) / 0.75)
+    v_n_max_lb = coeff_max * an_eff * sqrt_fm
+    v_n_max_kips = v_n_max_lb / 1000.0
+
+    v_n_calc_kips = v_nm_kips + v_ns_kips
+    v_n_kips = min(v_n_calc_kips, v_n_max_kips)
+    phi_vn_kips = phi * v_n_kips
+
+    shear_dcr = vu_kips / phi_vn_kips if phi_vn_kips > 0 else float("inf")
+    capacity_ok = shear_dcr <= 1.0
+
+    # Transverse reinforcement and spacing requirements
+    shear_rebar_required = vu_kips > phi_v_nm_kips
+    s_max_in = min(dv_in / 2.0, 48.0)
+
+    if shear_rebar_required:
+        rebar_provided = (av_in2 > 0.0) and (spacing_in > 0.0)
+        spacing_ok = rebar_provided and (spacing_in <= s_max_in)
+        detailing_ok = rebar_provided and spacing_ok
+    else:
+        detailing_ok = (spacing_in <= s_max_in) if spacing_in > 0.0 else True
+        spacing_ok = detailing_ok
+
+    passed = capacity_ok and detailing_ok
+    limit_state = (
+        "section_maximum_shear"
+        if v_n_calc_kips > v_n_max_kips
+        else ("masonry_plus_steel" if v_ns_kips > 0.0 else "masonry_alone")
+    )
+
+    return {
+        "pass": passed,
+        "dcr": round(shear_dcr, 4),
+        "phi_vn_kips": round(phi_vn_kips, 2),
+        "vn_kips": round(v_n_kips, 2),
+        "v_nm_kips": round(v_nm_kips, 2),
+        "v_ns_kips": round(v_ns_kips, 2),
+        "vn_max_kips": round(v_n_max_kips, 2),
+        "shear_span_ratio": round(shear_span_ratio, 3),
+        "s_max_in": round(s_max_in, 1),
+        "shear_rebar_required": shear_rebar_required,
+        "governing_limit_state": limit_state,
+        "capacity_ok": capacity_ok,
+        "detailing_ok": detailing_ok,
+    }
