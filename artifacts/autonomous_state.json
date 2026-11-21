@@ -1,12 +1,12 @@
 {
-  "updated_at_utc": "2026-11-21T08:57:58.936770+00:00",
-  "cycle": 2160,
+  "updated_at_utc": "2026-11-21T10:04:17.939420+00:00",
+  "cycle": 2190,
   "competition": "physical-engineerings-last-exam",
   "daily_limit": 5,
   "tests_ok": true,
-  "test_summary": "\n----------------------------------------------------------------------\nRan 100 tests in 0.083s\n\nOK",
+  "test_summary": "\n----------------------------------------------------------------------\nRan 101 tests in 0.080s\n\nOK",
   "harness_serve_sha256": "fcab241c4aa067fc7ba8f72ee384fcf5c1a44856193de2e33335b0fc4abd14de",
-  "harness_verifiers_sha256": "2666f5c8f5ed633b3c28516b4708689073f22a0fc1188ef163270673d547505b",
+  "harness_verifiers_sha256": "02af6dc0303b7996b625decb5590a431f66e612c82f00856f6c870820c42ecd1",
   "last_evolution": null,
   "kaggle": {
     "competition": "physical-engineerings-last-exam",
@@ -14,5 +14,5 @@
     "submissions_today_utc": 0,
     "status": "ok"
   },
-  "next_utc_reset_sec": 54181
+  "next_utc_reset_sec": 50202
 }

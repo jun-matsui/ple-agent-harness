@@ -9539,3 +9539,115 @@ def verify_aci_anchor_bolt_shear(
         "shear_ok": shear_ok,
         "interaction_ok": interaction_ok,
     }
+
+
+def verify_nec_box_fill(
+    box_volume_cuin: float = 0.0,
+    conductor_awgs: Sequence[int] = (),
+    num_internal_clamps: int = 0,
+    num_support_fittings: int = 0,
+    device_strap_awgs: Sequence[int] = (),
+    grounding_awgs: Sequence[int] = (),
+    isolated_ground_awgs: Sequence[int] = (),
+    box_width_in: float = 0.0,
+    box_height_in: float = 0.0,
+    box_depth_in: float = 0.0,
+) -> Dict[str, Any]:
+    """NEC 314.16(A) & (B) metallic and nonmetallic outlet/device box fill capacity and volume gate."""
+    scalars = [
+        box_volume_cuin,
+        float(num_internal_clamps),
+        float(num_support_fittings),
+        box_width_in,
+        box_height_in,
+        box_depth_in,
+    ]
+    if any(math.isnan(val) for val in scalars) or any(
+        math.isnan(float(x))
+        for seq in (conductor_awgs, device_strap_awgs, grounding_awgs, isolated_ground_awgs)
+        for x in seq
+    ):
+        return {"pass": False, "reason": "nan_input"}
+
+    if num_internal_clamps < 0 or num_support_fittings < 0:
+        return {"pass": False, "reason": "negative_hardware_count"}
+    if box_width_in < 0 or box_height_in < 0 or box_depth_in < 0 or box_volume_cuin < 0:
+        return {"pass": False, "reason": "negative_box_dimension"}
+
+    # Resolve effective box volume
+    if box_volume_cuin > 0.0:
+        v_box = box_volume_cuin
+    elif box_width_in > 0.0 and box_height_in > 0.0 and box_depth_in > 0.0:
+        v_box = box_width_in * box_height_in * box_depth_in
+    else:
+        return {"pass": False, "reason": "missing_or_zero_box_volume"}
+
+    all_awgs = (
+        list(conductor_awgs)
+        + list(device_strap_awgs)
+        + list(grounding_awgs)
+        + list(isolated_ground_awgs)
+    )
+    if not all_awgs:
+        return {"pass": False, "reason": "empty_box_contents"}
+
+    # NEC Table 314.16(B) Volume Allowance Required per Conductor (cu. in.)
+    volume_table: Dict[int, float] = {
+        18: 1.50,
+        16: 1.75,
+        14: 2.00,
+        12: 2.25,
+        10: 2.50,
+        8: 3.00,
+        6: 5.00,
+    }
+    for awg in all_awgs:
+        if awg not in volume_table:
+            return {"pass": False, "reason": "unsupported_or_invalid_awg"}
+
+    # Smallest AWG number corresponds to the physically largest conductor
+    largest_conductor_awg = min(all_awgs)
+
+    # 1. Conductor fill (NEC 314.16(B)(1))
+    conductor_vol = sum(volume_table[awg] for awg in conductor_awgs)
+
+    # 2. Clamp fill (NEC 314.16(B)(2)) - single allowance based on largest conductor present
+    clamp_vol = volume_table[largest_conductor_awg] if num_internal_clamps > 0 else 0.0
+
+    # 3. Support fittings fill (NEC 314.16(B)(3)) - one allowance per fitting type based on largest conductor
+    support_vol = num_support_fittings * volume_table[largest_conductor_awg]
+
+    # 4. Device or equipment fill (NEC 314.16(B)(4)) - double volume allowance (2x) per yoke/strap
+    device_vol = sum(2.0 * volume_table[awg] for awg in device_strap_awgs)
+
+    # 5. Equipment grounding conductor fill (NEC 314.16(B)(5))
+    # Up to 4 EGCs count as 1 allowance based on largest EGC; each additional counts as 0.25 allowance
+    ground_vol = 0.0
+    if grounding_awgs:
+        largest_ground_awg = min(grounding_awgs)
+        n_g = len(grounding_awgs)
+        mult_g = 1.0 if n_g <= 4 else (1.0 + 0.25 * float(n_g - 4))
+        ground_vol += mult_g * volume_table[largest_ground_awg]
+
+    if isolated_ground_awgs:
+        largest_iso_awg = min(isolated_ground_awgs)
+        n_iso = len(isolated_ground_awgs)
+        mult_iso = 1.0 if n_iso <= 4 else (1.0 + 0.25 * float(n_iso - 4))
+        ground_vol += mult_iso * volume_table[largest_iso_awg]
+
+    total_req_cuin = conductor_vol + clamp_vol + support_vol + device_vol + ground_vol
+    dcr = total_req_cuin / v_box if v_box > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "required_volume_cuin": round(total_req_cuin, 2),
+        "box_volume_cuin": round(v_box, 2),
+        "conductor_volume_cuin": round(conductor_vol, 2),
+        "device_volume_cuin": round(device_vol, 2),
+        "grounding_volume_cuin": round(ground_vol, 2),
+        "clamp_volume_cuin": round(clamp_vol, 2),
+        "support_fitting_volume_cuin": round(support_vol, 2),
+        "largest_conductor_awg": largest_conductor_awg,
+    }

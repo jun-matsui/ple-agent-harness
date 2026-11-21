@@ -1,0 +1,9 @@
+{
+  "score": 102.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nec_box_fill",
+    "rationale": "NEC Article 314.16(A)-(B) outlet/junction box volume and conductor fill calculations are universal deterministic gates on electrical engineering licensing exams, verifying that raceway enclosures prevent insulation abrasion, overheating, and fire hazard from overcrowded conductors, devices, and clamps.",
+    "model": "gemini-3.8-flash"
+  }
+}

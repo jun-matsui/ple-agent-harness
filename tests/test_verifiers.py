@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nec_box_fill,
     verify_aci_anchor_bolt_shear,
     verify_tms402_masonry_shear_wall,
     verify_conductor_short_circuit_withstand,
@@ -9088,6 +9089,93 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_futa_err["pass"])
         self.assertEqual(res_futa_err["reason"], "futa_exceeds_code_limit")
+
+
+    def test_nec_box_fill(self) -> None:
+        from harness.verifiers import verify_nec_box_fill
+
+        # Standard passing 4" x 2-1/8" square metallic box (30.3 cu in)
+        # Six 12 AWG conductors (6 * 2.25 = 13.5 cu in)
+        # Internal cable clamps (1 * 2.25 = 2.25 cu in)
+        # One duplex receptacle on 12 AWG (2 * 2.25 = 4.5 cu in)
+        # Two 12 AWG equipment grounding conductors (1 * 2.25 = 2.25 cu in)
+        # Total required = 13.5 + 2.25 + 4.5 + 2.25 = 22.5 cu in <= 30.3 cu in (Pass)
+        res_pass = verify_nec_box_fill(
+            box_volume_cuin=30.3,
+            conductor_awgs=[12, 12, 12, 12, 12, 12],
+            num_internal_clamps=2,
+            device_strap_awgs=[12],
+            grounding_awgs=[12, 12],
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["required_volume_cuin"], 22.5, places=2)
+        self.assertEqual(res_pass["conductor_volume_cuin"], 13.5)
+        self.assertEqual(res_pass["clamp_volume_cuin"], 2.25)
+        self.assertEqual(res_pass["device_volume_cuin"], 4.5)
+        self.assertEqual(res_pass["grounding_volume_cuin"], 2.25)
+        self.assertAlmostEqual(res_pass["dcr"], 22.5 / 30.3, places=4)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Volume overflow failure in shallow 4" x 1-1/2" box (21.0 cu in < 22.5 cu in)
+        res_fail = verify_nec_box_fill(
+            box_volume_cuin=21.0,
+            conductor_awgs=[12, 12, 12, 12, 12, 12],
+            num_internal_clamps=2,
+            device_strap_awgs=[12],
+            grounding_awgs=[12, 12],
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # More than 4 grounding conductors test (6 EGCs -> 1.0 + 2 * 0.25 = 1.5 allowances)
+        res_grounds = verify_nec_box_fill(
+            box_volume_cuin=40.0,
+            conductor_awgs=[14, 14, 14, 14],
+            grounding_awgs=[14, 14, 14, 14, 14, 14],
+        )
+        self.assertTrue(res_grounds["pass"])
+        # 4 * 2.0 = 8.0 conductor vol; 1.5 * 2.0 = 3.0 ground vol -> total 11.0 cu in
+        self.assertAlmostEqual(res_grounds["grounding_volume_cuin"], 3.0, places=2)
+        self.assertAlmostEqual(res_grounds["required_volume_cuin"], 11.0, places=2)
+
+        # Fallback box dimension volume calculation: 4 x 4 x 2.125 = 34.0 cu in
+        res_dim = verify_nec_box_fill(
+            box_width_in=4.0,
+            box_height_in=4.0,
+            box_depth_in=2.125,
+            conductor_awgs=[10, 10, 10, 10],
+        )
+        self.assertTrue(res_dim["pass"])
+        self.assertAlmostEqual(res_dim["box_volume_cuin"], 34.0, places=2)
+        self.assertEqual(res_dim["required_volume_cuin"], 10.0)
+
+        # Unsupported AWG size error handling
+        res_awg_err = verify_nec_box_fill(
+            box_volume_cuin=30.0,
+            conductor_awgs=[12, 4],
+        )
+        self.assertFalse(res_awg_err["pass"])
+        self.assertEqual(res_awg_err["reason"], "unsupported_or_invalid_awg")
+
+        # Empty box error handling
+        res_empty = verify_nec_box_fill(box_volume_cuin=30.0)
+        self.assertFalse(res_empty["pass"])
+        self.assertEqual(res_empty["reason"], "empty_box_contents")
+
+        # NaN and negative dimension error validation
+        res_nan = verify_nec_box_fill(
+            box_volume_cuin=float("nan"),
+            conductor_awgs=[12],
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_nec_box_fill(
+            box_volume_cuin=-20.0,
+            conductor_awgs=[12],
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_box_dimension")
 
 
 if __name__ == "__main__":
