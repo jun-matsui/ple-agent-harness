@@ -10052,3 +10052,161 @@ def verify_fhwa_culvert_inlet_control(
         "q_per_barrel_cfs": round(q_per_barrel, 2),
         "barrel_area_sqft": round(area_per_barrel, 2),
     }
+
+
+def verify_fhwa_culvert_outlet_control(
+    discharge_cfs: float,
+    culvert_diameter_ft: float,
+    culvert_length_ft: float,
+    culvert_shape: str = "circular",
+    entrance_edge_type: str = "square_edge",
+    box_span_ft: float = 0.0,
+    slope_ft_per_ft: float = 0.01,
+    manning_n: float = 0.012,
+    tailwater_depth_ft: float = 0.0,
+    ke_override: float = 0.0,
+    max_allowable_headwater_ft: float = 0.0,
+    max_hw_over_d: float = 1.5,
+    num_barrels: int = 1,
+    g_fps2: float = 32.174,
+) -> Dict[str, Any]:
+    """FHWA HDS-5 culvert outlet-control headwater depth (HW/D), full-barrel energy loss, and conveyance capacity gate."""
+    scalars = [
+        discharge_cfs,
+        culvert_diameter_ft,
+        culvert_length_ft,
+        box_span_ft,
+        slope_ft_per_ft,
+        manning_n,
+        tailwater_depth_ft,
+        ke_override,
+        max_allowable_headwater_ft,
+        max_hw_over_d,
+        float(num_barrels),
+        g_fps2,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if discharge_cfs < 0:
+        return {"pass": False, "reason": "negative_flow_input"}
+    if (
+        min(
+            culvert_diameter_ft,
+            culvert_length_ft,
+            manning_n,
+            max_hw_over_d,
+            g_fps2,
+        )
+        <= 0
+        or num_barrels < 1
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if slope_ft_per_ft < 0 or tailwater_depth_ft < 0 or ke_override < 0 or max_allowable_headwater_ft < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+
+    shape_clean = culvert_shape.strip().lower()
+    if shape_clean not in ("circular", "pipe", "box", "rectangular"):
+        return {"pass": False, "reason": "invalid_culvert_shape"}
+    is_box = shape_clean in ("box", "rectangular")
+
+    d_ft = culvert_diameter_ft
+    if is_box:
+        if box_span_ft <= 0.0:
+            return {"pass": False, "reason": "missing_or_non_positive_box_span"}
+        w_ft = box_span_ft
+        area_barrel_sqft = d_ft * w_ft
+        perimeter_ft = 2.0 * (d_ft + w_ft)
+        hydraulic_radius_ft = area_barrel_sqft / perimeter_ft
+    else:
+        w_ft = d_ft
+        area_barrel_sqft = (math.pi * (d_ft**2)) / 4.0
+        hydraulic_radius_ft = d_ft / 4.0
+
+    # FHWA HDS-5 Table C.2 Entrance loss coefficients Ke
+    edge_clean = entrance_edge_type.strip().lower().replace(" ", "_").replace("-", "_")
+    ke_table: Dict[str, float] = {
+        "square_edge": 0.50,
+        "square_edge_headwall": 0.50,
+        "headwall": 0.50,
+        "grooved_end": 0.20,
+        "groove_end": 0.20,
+        "projecting": 0.70,
+        "projecting_pipe": 0.70,
+        "beveled": 0.25,
+        "beveled_edge": 0.25,
+        "flared_wingwalls": 0.20,
+        "wingwalls": 0.20,
+        "chamfered": 0.20,
+        "projecting_cmp": 0.90,
+        "mitered_cmp": 0.70,
+    }
+
+    if ke_override > 0.0:
+        k_e = ke_override
+    elif edge_clean in ke_table:
+        k_e = ke_table[edge_clean]
+    else:
+        return {"pass": False, "reason": "invalid_entrance_edge_type"}
+
+    q_per_barrel = discharge_cfs / float(num_barrels)
+    if q_per_barrel == 0.0:
+        return {
+            "pass": True,
+            "dcr": 0.0,
+            "hw_depth_ft": 0.0,
+            "hw_over_d": 0.0,
+            "hw_allowable_ft": max_allowable_headwater_ft if max_allowable_headwater_ft > 0 else max_hw_over_d * d_ft,
+            "head_loss_h_ft": 0.0,
+            "velocity_fps": 0.0,
+            "critical_depth_ft": 0.0,
+            "ho_tailwater_equiv_ft": 0.0,
+            "q_per_barrel_cfs": 0.0,
+        }
+
+    # Average full-barrel velocity and velocity head
+    v_fps = q_per_barrel / area_barrel_sqft
+    h_v_ft = (v_fps**2) / (2.0 * g_fps2)
+
+    # Entrance loss and Manning friction loss (FHWA HDS-5 Eq. 3-6)
+    h_e_ft = k_e * h_v_ft
+    r_term = hydraulic_radius_ft ** (4.0 / 3.0)
+    h_f_ft = ((29.16 * (manning_n**2) * culvert_length_ft) / r_term) * h_v_ft
+    h_total_ft = h_v_ft + h_e_ft + h_f_ft
+
+    # Critical depth dc calculation
+    if is_box:
+        q_unit = q_per_barrel / w_ft
+        d_c_ft = min(( (q_unit**2) / g_fps2 ) ** (1.0 / 3.0), d_ft)
+    else:
+        # FHWA circular critical depth approximation
+        d_c_calc = 0.325 * ((q_per_barrel / d_ft) ** (2.0 / 3.0)) + 0.083 * d_ft
+        d_c_ft = min(max(d_c_calc, 0.0), d_ft)
+
+    # Downstream equivalent water surface elevation ho
+    h_o_ft = max(tailwater_depth_ft, (d_c_ft + d_ft) / 2.0)
+
+    # Outlet control headwater depth HW above inlet invert (FHWA HDS-5 Eq. 3-7)
+    barrel_drop_ft = culvert_length_ft * slope_ft_per_ft
+    hw_depth_ft = max(0.0, h_total_ft + h_o_ft - barrel_drop_ft)
+    hw_over_d = hw_depth_ft / d_ft
+
+    if max_allowable_headwater_ft > 0.0:
+        hw_allowable_ft = max_allowable_headwater_ft
+    else:
+        hw_allowable_ft = max_hw_over_d * d_ft
+
+    dcr = hw_depth_ft / hw_allowable_ft if hw_allowable_ft > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "hw_depth_ft": round(hw_depth_ft, 2),
+        "hw_over_d": round(hw_over_d, 3),
+        "hw_allowable_ft": round(hw_allowable_ft, 2),
+        "head_loss_h_ft": round(h_total_ft, 2),
+        "velocity_fps": round(v_fps, 2),
+        "critical_depth_ft": round(d_c_ft, 2),
+        "ho_tailwater_equiv_ft": round(h_o_ft, 2),
+        "q_per_barrel_cfs": round(q_per_barrel, 2),
+    }

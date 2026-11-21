@@ -1,0 +1,9 @@
+{
+  "score": 106.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_fhwa_culvert_outlet_control",
+    "rationale": "Completes the FHWA HDS-5 highway drainage verification suite alongside inlet control by calculating full-barrel energy head loss, tailwater submergence, equivalent downstream depth, and outlet-control headwater depth.",
+    "model": "gemini-3.8-flash"
+  }
+}
