@@ -9651,3 +9651,124 @@ def verify_nec_box_fill(
         "support_fitting_volume_cuin": round(support_vol, 2),
         "largest_conductor_awg": largest_conductor_awg,
     }
+
+
+def verify_aisc_reduced_beam_section(
+    d_beam_in: float,
+    bf_in: float,
+    tf_in: float,
+    zx_in3: float,
+    clear_span_in: float,
+    cut_distance_a_in: float,
+    cut_length_b_in: float,
+    cut_depth_c_in: float,
+    v_gravity_kips: float = 0.0,
+    fy_ksi: float = 50.0,
+    fu_ksi: float = 65.0,
+    ry_factor: float = 1.10,
+    is_special_moment_frame: bool = True,
+    phi_d: float = 1.00,
+) -> Dict[str, Any]:
+    """AISC 358-16 Chapter 5 prequalified Reduced Beam Section (RBS) seismic moment connection check."""
+    scalars = [
+        d_beam_in,
+        bf_in,
+        tf_in,
+        zx_in3,
+        clear_span_in,
+        cut_distance_a_in,
+        cut_length_b_in,
+        cut_depth_c_in,
+        v_gravity_kips,
+        fy_ksi,
+        fu_ksi,
+        ry_factor,
+        phi_d,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            d_beam_in,
+            bf_in,
+            tf_in,
+            zx_in3,
+            clear_span_in,
+            cut_distance_a_in,
+            cut_length_b_in,
+            cut_depth_c_in,
+            fy_ksi,
+            fu_ksi,
+            ry_factor,
+            phi_d,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if v_gravity_kips < 0:
+        return {"pass": False, "reason": "negative_gravity_shear"}
+    if 2.0 * tf_in >= d_beam_in or 2.0 * cut_depth_c_in >= bf_in:
+        return {"pass": False, "reason": "invalid_section_geometry"}
+
+    # AISC 358-16 Section 5.3 Beam Prequalification Limits
+    span_ratio = clear_span_in / d_beam_in
+    min_span_ratio = 7.0 if is_special_moment_frame else 5.0
+    depth_ok = d_beam_in <= 38.0  # W36 nominal plus tolerance
+    flange_thick_ok = tf_in <= 1.75
+    span_ratio_ok = span_ratio >= min_span_ratio
+    prequal_ok = depth_ok and flange_thick_ok and span_ratio_ok
+
+    # AISC 358-16 Section 5.8 RBS cut geometry requirements
+    a_min, a_max = 0.50 * bf_in, 0.75 * bf_in
+    b_min, b_max = 0.65 * d_beam_in, 0.85 * d_beam_in
+    c_min, c_max = 0.10 * bf_in, 0.25 * bf_in
+
+    a_ok = (a_min - 1e-4) <= cut_distance_a_in <= (a_max + 1e-4)
+    b_ok = (b_min - 1e-4) <= cut_length_b_in <= (b_max + 1e-4)
+    c_ok = (c_min - 1e-4) <= cut_depth_c_in <= (c_max + 1e-4)
+    cut_geom_ok = a_ok and b_ok and c_ok
+
+    # Distance from column face to center of RBS plastic hinge (s_h)
+    s_h = cut_distance_a_in + (cut_length_b_in / 2.0)
+    l_prime = clear_span_in - 2.0 * s_h
+    if l_prime <= 0:
+        return {"pass": False, "reason": "hinges_exceed_clear_span"}
+
+    # Reduced plastic section modulus Z_RBS (AISC Eq. 5.8-5)
+    z_rbs = zx_in3 - 2.0 * cut_depth_c_in * tf_in * (d_beam_in - tf_in)
+    if z_rbs <= 0:
+        return {"pass": False, "reason": "negative_or_zero_z_rbs"}
+
+    # Expected plastic moment at center of RBS (AISC Eq. 5.8-4)
+    c_pr = min((fy_ksi + fu_ksi) / (2.0 * fy_ksi), 1.20)
+    m_pr_kip_in = c_pr * ry_factor * fy_ksi * z_rbs
+
+    # Shear force at center of RBS (AISC Eq. 5.8-6)
+    v_rbs_kips = (2.0 * m_pr_kip_in / l_prime) + v_gravity_kips
+
+    # Probable maximum moment at face of column (AISC Eq. 5.8-7)
+    m_f_kip_in = m_pr_kip_in + v_rbs_kips * s_h
+
+    # Expected plastic moment of unreduced beam at column face (AISC Eq. 5.8-8)
+    m_pe_kip_in = ry_factor * fy_ksi * zx_in3
+    phi_m_pe_kip_in = phi_d * m_pe_kip_in
+
+    dcr = m_f_kip_in / phi_m_pe_kip_in if phi_m_pe_kip_in > 0 else float("inf")
+    flexure_ok = dcr <= 1.0
+    passed = prequal_ok and cut_geom_ok and flexure_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "m_f_kip_ft": round(m_f_kip_in / 12.0, 2),
+        "phi_m_pe_kip_ft": round(phi_m_pe_kip_in / 12.0, 2),
+        "m_pr_kip_ft": round(m_pr_kip_in / 12.0, 2),
+        "v_rbs_kips": round(v_rbs_kips, 2),
+        "z_rbs_in3": round(z_rbs, 2),
+        "c_pr": round(c_pr, 4),
+        "l_prime_in": round(l_prime, 2),
+        "span_ratio": round(span_ratio, 2),
+        "prequal_ok": prequal_ok,
+        "cut_geom_ok": cut_geom_ok,
+        "flexure_ok": flexure_ok,
+    }

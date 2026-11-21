@@ -1,0 +1,9 @@
+{
+  "score": 103.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_reduced_beam_section",
+    "rationale": "Implements AISC 358-16 Chapter 5 & AISC 341-16 seismic prequalified Reduced Beam Section (RBS / dogbone) moment connection verification for Special and Intermediate Moment Frames, validating member prequalification limits, cut geometry bounds, plastic hinge distance, expected moment at the column face, and flexural capacity ratio.",
+    "model": "gemini-3.8-flash"
+  }
+}

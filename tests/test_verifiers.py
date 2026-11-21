@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_reduced_beam_section,
     verify_nec_box_fill,
     verify_aci_anchor_bolt_shear,
     verify_tms402_masonry_shear_wall,
@@ -9176,6 +9177,139 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_box_dimension")
+
+
+    def test_aisc_reduced_beam_section(self) -> None:
+        from harness.verifiers import verify_aisc_reduced_beam_section
+
+        # Standard passing W36x150 Reduced Beam Section in Special Moment Frame (SMF)
+        # W36x150: d=35.85 in, bf=11.975 in, tf=0.940 in, Zx=581 in3, Clear span = 300 in
+        # a = 0.60 * bf = 7.185 in, b = 0.75 * d = 26.89 in, c = 0.20 * bf = 2.395 in
+        res_pass = verify_aisc_reduced_beam_section(
+            d_beam_in=35.85,
+            bf_in=11.975,
+            tf_in=0.940,
+            zx_in3=581.0,
+            clear_span_in=300.0,
+            cut_distance_a_in=7.185,
+            cut_length_b_in=26.89,
+            cut_depth_c_in=2.395,
+            v_gravity_kips=15.0,
+            fy_ksi=50.0,
+            fu_ksi=65.0,
+            ry_factor=1.10,
+            is_special_moment_frame=True,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertTrue(res_pass["prequal_ok"])
+        self.assertTrue(res_pass["cut_geom_ok"])
+        self.assertTrue(res_pass["flexure_ok"])
+        self.assertAlmostEqual(res_pass["c_pr"], 1.15, places=2)
+        self.assertAlmostEqual(res_pass["z_rbs_in3"], 423.81, places=1)
+        self.assertAlmostEqual(res_pass["l_prime_in"], 258.74, places=1)
+        self.assertAlmostEqual(res_pass["span_ratio"], 8.37, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Span-to-depth ratio failure (L_clear / d < 7.0 for SMF)
+        res_span_fail = verify_aisc_reduced_beam_section(
+            d_beam_in=35.85,
+            bf_in=11.975,
+            tf_in=0.940,
+            zx_in3=581.0,
+            clear_span_in=215.0,
+            cut_distance_a_in=7.185,
+            cut_length_b_in=26.89,
+            cut_depth_c_in=2.395,
+            is_special_moment_frame=True,
+        )
+        self.assertFalse(res_span_fail["pass"])
+        self.assertFalse(res_span_fail["prequal_ok"])
+        self.assertLess(res_span_fail["span_ratio"], 7.0)
+
+        # Cut geometry failure (cut depth c exceeds 0.25 * bf)
+        res_cut_fail = verify_aisc_reduced_beam_section(
+            d_beam_in=35.85,
+            bf_in=11.975,
+            tf_in=0.940,
+            zx_in3=581.0,
+            clear_span_in=300.0,
+            cut_distance_a_in=7.185,
+            cut_length_b_in=26.89,
+            cut_depth_c_in=3.50,
+        )
+        self.assertFalse(res_cut_fail["pass"])
+        self.assertFalse(res_cut_fail["cut_geom_ok"])
+
+        # Column face moment overload failure (high gravity shear pushing Mf > phi*Mpe)
+        res_flex_fail = verify_aisc_reduced_beam_section(
+            d_beam_in=35.85,
+            bf_in=11.975,
+            tf_in=0.940,
+            zx_in3=581.0,
+            clear_span_in=300.0,
+            cut_distance_a_in=7.185,
+            cut_length_b_in=26.89,
+            cut_depth_c_in=2.395,
+            v_gravity_kips=120.0,
+        )
+        self.assertFalse(res_flex_fail["pass"])
+        self.assertFalse(res_flex_fail["flexure_ok"])
+        self.assertGreater(res_flex_fail["dcr"], 1.0)
+
+        # Clear span too short for plastic hinge locations
+        res_hinge_err = verify_aisc_reduced_beam_section(
+            d_beam_in=35.85,
+            bf_in=11.975,
+            tf_in=0.940,
+            zx_in3=581.0,
+            clear_span_in=35.0,
+            cut_distance_a_in=7.185,
+            cut_length_b_in=26.89,
+            cut_depth_c_in=2.395,
+        )
+        self.assertFalse(res_hinge_err["pass"])
+        self.assertEqual(res_hinge_err["reason"], "hinges_exceed_clear_span")
+
+        # Input error validation checks
+        res_nan = verify_aisc_reduced_beam_section(
+            d_beam_in=float("nan"),
+            bf_in=11.975,
+            tf_in=0.940,
+            zx_in3=581.0,
+            clear_span_in=300.0,
+            cut_distance_a_in=7.185,
+            cut_length_b_in=26.89,
+            cut_depth_c_in=2.395,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aisc_reduced_beam_section(
+            d_beam_in=-35.85,
+            bf_in=11.975,
+            tf_in=0.940,
+            zx_in3=581.0,
+            clear_span_in=300.0,
+            cut_distance_a_in=7.185,
+            cut_length_b_in=26.89,
+            cut_depth_c_in=2.395,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_material")
+
+        res_neg_shear = verify_aisc_reduced_beam_section(
+            d_beam_in=35.85,
+            bf_in=11.975,
+            tf_in=0.940,
+            zx_in3=581.0,
+            clear_span_in=300.0,
+            cut_distance_a_in=7.185,
+            cut_length_b_in=26.89,
+            cut_depth_c_in=2.395,
+            v_gravity_kips=-10.0,
+        )
+        self.assertFalse(res_neg_shear["pass"])
+        self.assertEqual(res_neg_shear["reason"], "negative_gravity_shear")
 
 
 if __name__ == "__main__":
