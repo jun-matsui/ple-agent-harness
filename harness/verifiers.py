@@ -10344,3 +10344,131 @@ def verify_aashto_rigid_pavement_slab_thickness(
         "traffic_ok": traffic_ok,
         "thickness_ok": thickness_ok,
     }
+
+
+def verify_ieee519_harmonic_distortion(
+    short_circuit_current_ka: float,
+    fundamental_current_a: float,
+    harmonic_orders: Sequence[int],
+    harmonic_currents_a: Sequence[float],
+    max_demand_load_current_a: float = 0.0,
+    system_voltage_kv: float = 0.48,
+    max_tdd_override_pct: float = 0.0,
+) -> Dict[str, Any]:
+    """IEEE 519-2014/2022 Section 5 PCC harmonic current distortion and Total Demand Distortion (TDD) gate."""
+    scalars = [
+        short_circuit_current_ka,
+        fundamental_current_a,
+        max_demand_load_current_a,
+        system_voltage_kv,
+        max_tdd_override_pct,
+    ]
+    if any(math.isnan(val) for val in scalars) or any(math.isnan(float(h)) for h in harmonic_orders) or any(math.isnan(val) for val in harmonic_currents_a):
+        return {"pass": False, "reason": "nan_input"}
+    if short_circuit_current_ka <= 0 or fundamental_current_a <= 0 or system_voltage_kv <= 0:
+        return {"pass": False, "reason": "non_positive_current_or_voltage"}
+    if max_demand_load_current_a < 0 or max_tdd_override_pct < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+    if not harmonic_orders or not harmonic_currents_a:
+        return {"pass": False, "reason": "empty_harmonic_list"}
+    if len(harmonic_orders) != len(harmonic_currents_a):
+        return {"pass": False, "reason": "length_mismatch"}
+    if any(h < 2 for h in harmonic_orders):
+        return {"pass": False, "reason": "invalid_harmonic_order"}
+    if any(i < 0 for i in harmonic_currents_a):
+        return {"pass": False, "reason": "negative_harmonic_current"}
+
+    # Resolve 15- or 30-minute maximum demand load current (I_L)
+    i_l = max_demand_load_current_a if max_demand_load_current_a > 0.0 else fundamental_current_a
+
+    # Short-circuit ratio at PCC: I_sc / I_L
+    i_sc_a = short_circuit_current_ka * 1000.0
+    scr = i_sc_a / i_l
+
+    # IEEE 519 Table 1 base distortion limits for V <= 69 kV (odd harmonics, % of I_L)
+    if scr < 20.0:
+        base_limits = (4.0, 2.0, 1.5, 0.6, 0.3, 5.0)
+        scr_tier = "< 20"
+    elif scr < 50.0:
+        base_limits = (7.0, 3.5, 2.5, 1.0, 0.5, 8.0)
+        scr_tier = "20 to < 50"
+    elif scr < 100.0:
+        base_limits = (10.0, 4.5, 4.0, 1.5, 0.7, 12.0)
+        scr_tier = "50 to < 100"
+    elif scr < 1000.0:
+        base_limits = (12.0, 5.5, 5.0, 2.0, 1.0, 15.0)
+        scr_tier = "100 to < 1000"
+    else:
+        base_limits = (15.0, 7.0, 6.0, 2.5, 1.4, 20.0)
+        scr_tier = ">= 1000"
+
+    # IEEE 519 Section 5.1 voltage scale multipliers for medium and high voltages
+    if system_voltage_kv <= 69.0:
+        v_factor = 1.00
+    elif system_voltage_kv <= 161.0:
+        v_factor = 0.50
+    else:
+        v_factor = 0.25
+
+    lim_11 = base_limits[0] * v_factor
+    lim_17 = base_limits[1] * v_factor
+    lim_23 = base_limits[2] * v_factor
+    lim_35 = base_limits[3] * v_factor
+    lim_50 = base_limits[4] * v_factor
+    lim_tdd = max_tdd_override_pct if max_tdd_override_pct > 0.0 else (base_limits[5] * v_factor)
+
+    # Evaluate individual harmonic current limits
+    harmonic_dcrs: List[float] = []
+    harmonic_pcts: List[float] = []
+    for h, i_h in zip(harmonic_orders, harmonic_currents_a):
+        pct_of_il = (i_h / i_l) * 100.0
+        harmonic_pcts.append(round(pct_of_il, 3))
+
+        if h < 11:
+            odd_limit = lim_11
+        elif h < 17:
+            odd_limit = lim_17
+        elif h < 23:
+            odd_limit = lim_23
+        elif h < 35:
+            odd_limit = lim_35
+        else:
+            odd_limit = lim_50
+
+        # IEEE 519 Section 5.1: Even harmonics are limited to 25% of the odd harmonic limits
+        h_limit = (0.25 * odd_limit) if (h % 2 == 0) else odd_limit
+        dcr_h = pct_of_il / h_limit if h_limit > 0 else float("inf")
+        harmonic_dcrs.append(dcr_h)
+
+    max_individual_dcr = max(harmonic_dcrs)
+    worst_h_idx = harmonic_dcrs.index(max_individual_dcr)
+    worst_harmonic = harmonic_orders[worst_h_idx]
+    individual_harmonics_ok = max_individual_dcr <= 1.0
+
+    # Calculate Total Demand Distortion (TDD) and Current THD
+    sum_sq_ih = sum(i**2 for i in harmonic_currents_a)
+    i_total_harmonic = math.sqrt(sum_sq_ih)
+    tdd_pct = (i_total_harmonic / i_l) * 100.0
+    thd_current_pct = (i_total_harmonic / fundamental_current_a) * 100.0
+
+    tdd_dcr = tdd_pct / lim_tdd if lim_tdd > 0 else float("inf")
+    tdd_ok = tdd_dcr <= 1.0
+
+    gov_dcr = max(max_individual_dcr, tdd_dcr)
+    passed = individual_harmonics_ok and tdd_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "tdd_pct": round(tdd_pct, 2),
+        "max_allowed_tdd_pct": round(lim_tdd, 2),
+        "thd_current_pct": round(thd_current_pct, 2),
+        "total_harmonic_current_a": round(i_total_harmonic, 2),
+        "short_circuit_ratio": round(scr, 1),
+        "scr_tier": scr_tier,
+        "worst_harmonic_order": worst_harmonic,
+        "worst_harmonic_dcr": round(max_individual_dcr, 4),
+        "harmonic_current_pcts": harmonic_pcts,
+        "individual_harmonics_ok": individual_harmonics_ok,
+        "tdd_ok": tdd_ok,
+    }

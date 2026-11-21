@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_ieee519_harmonic_distortion,
     verify_aashto_rigid_pavement_slab_thickness,
     verify_fhwa_culvert_outlet_control,
     verify_fhwa_culvert_inlet_control,
@@ -9707,6 +9708,108 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_traffic")
+
+
+    def test_ieee519_harmonic_distortion(self) -> None:
+        from harness.verifiers import verify_ieee519_harmonic_distortion
+
+        # Standard passing 6-pulse industrial VFD load on 480V service
+        # Isc = 20 kA (20,000 A), IL = 500 A -> SCR = 40.0 (Tier 2: 20 <= SCR < 50, TDD limit = 8.0%)
+        # Harmonics 5th (20A = 4.0%), 7th (12A = 2.4%), 11th (8A = 1.6%), 13th (5A = 1.0%)
+        # Irms_h = sqrt(400+144+64+25) = sqrt(633) = 25.16 A -> TDD = 5.03% <= 8.0%
+        res_pass = verify_ieee519_harmonic_distortion(
+            short_circuit_current_ka=20.0,
+            fundamental_current_a=500.0,
+            harmonic_orders=[5, 7, 11, 13],
+            harmonic_currents_a=[20.0, 12.0, 8.0, 5.0],
+            max_demand_load_current_a=500.0,
+            system_voltage_kv=0.48,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["scr_tier"], "20 to < 50")
+        self.assertAlmostEqual(res_pass["short_circuit_ratio"], 40.0, places=1)
+        self.assertAlmostEqual(res_pass["total_harmonic_current_a"], 25.16, places=1)
+        self.assertAlmostEqual(res_pass["tdd_pct"], 5.03, places=2)
+        self.assertEqual(res_pass["max_allowed_tdd_pct"], 8.0)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["individual_harmonics_ok"])
+        self.assertTrue(res_pass["tdd_ok"])
+
+        # Even harmonic 25% rule violation: 2nd harmonic (12A = 2.4% of IL)
+        # Odd limit for h < 11 is 7.0%, so even limit is 0.25 * 7.0% = 1.75% -> 2.4% fails
+        res_even_fail = verify_ieee519_harmonic_distortion(
+            short_circuit_current_ka=20.0,
+            fundamental_current_a=500.0,
+            harmonic_orders=[2, 5, 7],
+            harmonic_currents_a=[12.0, 15.0, 10.0],
+            max_demand_load_current_a=500.0,
+        )
+        self.assertFalse(res_even_fail["pass"])
+        self.assertFalse(res_even_fail["individual_harmonics_ok"])
+        self.assertEqual(res_even_fail["worst_harmonic_order"], 2)
+        self.assertGreater(res_even_fail["worst_harmonic_dcr"], 1.0)
+
+        # Overall TDD exceeding limit failure
+        res_tdd_fail = verify_ieee519_harmonic_distortion(
+            short_circuit_current_ka=20.0,
+            fundamental_current_a=500.0,
+            harmonic_orders=[5, 7],
+            harmonic_currents_a=[32.0, 32.0],
+            max_demand_load_current_a=500.0,
+        )
+        self.assertFalse(res_tdd_fail["pass"])
+        self.assertFalse(res_tdd_fail["tdd_ok"])
+        self.assertGreater(res_tdd_fail["tdd_pct"], 8.0)
+
+        # Medium-voltage (115 kV) derating check: 50% multiplier applied per IEEE 519
+        res_mv = verify_ieee519_harmonic_distortion(
+            short_circuit_current_ka=20.0,
+            fundamental_current_a=500.0,
+            harmonic_orders=[5, 7],
+            harmonic_currents_a=[20.0, 12.0],
+            system_voltage_kv=115.0,
+        )
+        self.assertEqual(res_mv["max_allowed_tdd_pct"], 4.0)
+
+        # Input error: Mismatched list lengths
+        res_mismatch = verify_ieee519_harmonic_distortion(
+            short_circuit_current_ka=20.0,
+            fundamental_current_a=500.0,
+            harmonic_orders=[5, 7],
+            harmonic_currents_a=[20.0],
+        )
+        self.assertFalse(res_mismatch["pass"])
+        self.assertEqual(res_mismatch["reason"], "length_mismatch")
+
+        # Input error: Harmonic order < 2
+        res_order_err = verify_ieee519_harmonic_distortion(
+            short_circuit_current_ka=20.0,
+            fundamental_current_a=500.0,
+            harmonic_orders=[1, 5],
+            harmonic_currents_a=[500.0, 20.0],
+        )
+        self.assertFalse(res_order_err["pass"])
+        self.assertEqual(res_order_err["reason"], "invalid_harmonic_order")
+
+        # Input error: NaN input
+        res_nan = verify_ieee519_harmonic_distortion(
+            short_circuit_current_ka=float("nan"),
+            fundamental_current_a=500.0,
+            harmonic_orders=[5],
+            harmonic_currents_a=[20.0],
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Input error: Non-positive current
+        res_neg = verify_ieee519_harmonic_distortion(
+            short_circuit_current_ka=20.0,
+            fundamental_current_a=-500.0,
+            harmonic_orders=[5],
+            harmonic_currents_a=[20.0],
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_current_or_voltage")
 
 
 if __name__ == "__main__":

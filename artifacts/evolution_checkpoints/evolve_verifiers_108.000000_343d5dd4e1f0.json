@@ -1,0 +1,9 @@
+{
+  "score": 108.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ieee519_harmonic_distortion",
+    "rationale": "IEEE 519-2022 Section 5 governs current distortion limits and Total Demand Distortion (TDD) at the point of common coupling (PCC) for non-linear power loads such as VFDs, EV fast chargers, and solar inverters. This deterministic verifier evaluates individual harmonic current distortion, even-harmonic derating (25% rule), high-voltage attenuation, and overall TDD compliance across standard short-circuit ratio tiers.",
+    "model": "gemini-3.8-flash"
+  }
+}
