@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_activated_sludge_aeration_basin,
     verify_wastewater_clarifier_sizing,
     verify_hcm_freeway_level_of_service,
     verify_nfpa54_fuel_gas_pipe_sizing,
@@ -8672,6 +8673,110 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_geometry_or_flow")
+
+
+    def test_activated_sludge_aeration_basin(self) -> None:
+        from harness.verifiers import verify_activated_sludge_aeration_basin
+
+        # Standard passing municipal activated sludge aeration basin
+        # Q = 2.0 MGD, Influent BOD = 220 mg/L, Target Effluent = 15 mg/L
+        # Basin = 600,000 gal, MLVSS = 2500 mg/L, Target SRT = 8.0 days
+        res_pass = verify_activated_sludge_aeration_basin(
+            q_mgd=2.0,
+            bod_in_mg_l=220.0,
+            basin_volume_gal=600000.0,
+            bod_eff_target_mg_l=15.0,
+            mlvss_mg_l=2500.0,
+            target_srt_days=8.0,
+            yield_coeff_y=0.60,
+            decay_coeff_kd=0.06,
+            min_hrt_hours=6.0,
+            max_fm_ratio=0.40,
+            min_fm_ratio=0.15,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["px_vss_lb_per_day"], 1386.2, places=1)
+        self.assertAlmostEqual(res_pass["v_required_gal"], 531891.7, places=0)
+        self.assertAlmostEqual(res_pass["actual_srt_days"], 9.02, places=1)
+        self.assertEqual(res_pass["hrt_hours"], 7.20)
+        self.assertAlmostEqual(res_pass["fm_ratio"], 0.293, places=2)
+        self.assertAlmostEqual(res_pass["o2_demand_lb_per_day"], 3060.1, places=0)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["vol_ok"])
+        self.assertTrue(res_pass["hrt_ok"])
+        self.assertTrue(res_pass["fm_ok"])
+
+        # Undersized aeration basin failing volume and target SRT (DCR > 1.0)
+        res_vol_fail = verify_activated_sludge_aeration_basin(
+            q_mgd=2.0,
+            bod_in_mg_l=220.0,
+            basin_volume_gal=450000.0,
+            target_srt_days=8.0,
+        )
+        self.assertFalse(res_vol_fail["pass"])
+        self.assertFalse(res_vol_fail["vol_ok"])
+        self.assertGreater(res_vol_fail["volume_dcr"], 1.0)
+        self.assertLess(res_vol_fail["actual_srt_days"], 8.0)
+
+        # Inadequate hydraulic retention time failure (HRT < 6.0 hours)
+        res_hrt_fail = verify_activated_sludge_aeration_basin(
+            q_mgd=3.0,
+            bod_in_mg_l=150.0,
+            basin_volume_gal=600000.0,
+            min_hrt_hours=6.0,
+        )
+        self.assertFalse(res_hrt_fail["pass"])
+        self.assertFalse(res_hrt_fail["hrt_ok"])
+        self.assertEqual(res_hrt_fail["hrt_hours"], 4.80)
+        self.assertGreater(res_hrt_fail["hrt_dcr"], 1.0)
+
+        # Overloaded F/M ratio failure (F/M > 0.40)
+        res_fm_fail = verify_activated_sludge_aeration_basin(
+            q_mgd=2.0,
+            bod_in_mg_l=350.0,
+            basin_volume_gal=550000.0,
+            max_fm_ratio=0.40,
+        )
+        self.assertFalse(res_fm_fail["pass"])
+        self.assertFalse(res_fm_fail["fm_ok"])
+        self.assertGreater(res_fm_fail["fm_ratio"], 0.40)
+
+        # Process error: Effluent BOD equal to or greater than Influent BOD
+        res_bod_err = verify_activated_sludge_aeration_basin(
+            q_mgd=2.0,
+            bod_in_mg_l=200.0,
+            basin_volume_gal=600000.0,
+            bod_eff_target_mg_l=220.0,
+        )
+        self.assertFalse(res_bod_err["pass"])
+        self.assertEqual(res_bod_err["reason"], "effluent_bod_not_below_influent")
+
+        # Input error validation checks
+        res_nan = verify_activated_sludge_aeration_basin(
+            q_mgd=float("nan"),
+            bod_in_mg_l=200.0,
+            basin_volume_gal=600000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_activated_sludge_aeration_basin(
+            q_mgd=-2.0,
+            bod_in_mg_l=200.0,
+            basin_volume_gal=600000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_flow_or_process_parameter")
+
+        res_fm_limits = verify_activated_sludge_aeration_basin(
+            q_mgd=2.0,
+            bod_in_mg_l=200.0,
+            basin_volume_gal=600000.0,
+            min_fm_ratio=0.50,
+            max_fm_ratio=0.30,
+        )
+        self.assertFalse(res_fm_limits["pass"])
+        self.assertEqual(res_fm_limits["reason"], "invalid_fm_limits")
 
 
 if __name__ == "__main__":

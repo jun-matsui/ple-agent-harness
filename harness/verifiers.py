@@ -9019,3 +9019,112 @@ def verify_wastewater_clarifier_sizing(
         "swd_ok": swd_ok,
         "hrt_ok": hrt_ok,
     }
+
+
+def verify_activated_sludge_aeration_basin(
+    q_mgd: float,
+    bod_in_mg_l: float,
+    basin_volume_gal: float,
+    bod_eff_target_mg_l: float = 15.0,
+    mlvss_mg_l: float = 2500.0,
+    target_srt_days: float = 8.0,
+    yield_coeff_y: float = 0.60,
+    decay_coeff_kd: float = 0.06,
+    min_hrt_hours: float = 6.0,
+    max_fm_ratio: float = 0.40,
+    min_fm_ratio: float = 0.15,
+    mlvss_to_mlss_ratio: float = 0.80,
+) -> Dict[str, Any]:
+    """Ten States Standards & Metcalf & Eddy activated sludge aeration basin volume, SRT, HRT, and F/M gate."""
+    scalars = [
+        q_mgd,
+        bod_in_mg_l,
+        basin_volume_gal,
+        bod_eff_target_mg_l,
+        mlvss_mg_l,
+        target_srt_days,
+        yield_coeff_y,
+        decay_coeff_kd,
+        min_hrt_hours,
+        max_fm_ratio,
+        min_fm_ratio,
+        mlvss_to_mlss_ratio,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            q_mgd,
+            bod_in_mg_l,
+            basin_volume_gal,
+            mlvss_mg_l,
+            target_srt_days,
+            yield_coeff_y,
+            min_hrt_hours,
+            max_fm_ratio,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_flow_or_process_parameter"}
+    if bod_eff_target_mg_l < 0 or decay_coeff_kd < 0 or min_fm_ratio < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+    if bod_eff_target_mg_l >= bod_in_mg_l:
+        return {"pass": False, "reason": "effluent_bod_not_below_influent"}
+    if min_fm_ratio >= max_fm_ratio:
+        return {"pass": False, "reason": "invalid_fm_limits"}
+    if not (0.40 <= mlvss_to_mlss_ratio <= 1.0):
+        return {"pass": False, "reason": "invalid_vss_fraction"}
+
+    delta_bod = bod_in_mg_l - bod_eff_target_mg_l
+    bod_removed_lb_per_day = q_mgd * delta_bod * 8.34
+    bod_applied_lb_per_day = q_mgd * bod_in_mg_l * 8.34
+
+    # Net volatile solids production Px (lb VSS/day)
+    denom_px = 1.0 + (decay_coeff_kd * target_srt_days)
+    px_vss_lb_per_day = (yield_coeff_y * bod_removed_lb_per_day) / denom_px
+    px_tss_lb_per_day = px_vss_lb_per_day / mlvss_to_mlss_ratio
+
+    # Required MLVSS inventory and required aeration tank volume
+    mvss_required_lb = target_srt_days * px_vss_lb_per_day
+    v_required_mg = mvss_required_lb / (mlvss_mg_l * 8.34)
+    v_required_gal = v_required_mg * 1000000.0
+    vol_dcr = v_required_gal / basin_volume_gal
+    vol_ok = vol_dcr <= 1.0
+
+    # Provided inventory and actual process metrics
+    v_prov_mg = basin_volume_gal / 1000000.0
+    mvss_provided_lb = v_prov_mg * mlvss_mg_l * 8.34
+    actual_srt_days = mvss_provided_lb / px_vss_lb_per_day if px_vss_lb_per_day > 0 else float("inf")
+
+    hrt_hours = (v_prov_mg / q_mgd) * 24.0
+    hrt_dcr = min_hrt_hours / hrt_hours if hrt_hours > 0 else float("inf")
+    hrt_ok = hrt_dcr <= 1.0
+
+    # Food-to-Microorganism ratio F/M (lb BOD / lb MLVSS-day)
+    fm_ratio = bod_applied_lb_per_day / mvss_provided_lb if mvss_provided_lb > 0 else float("inf")
+    fm_high_dcr = fm_ratio / max_fm_ratio
+    fm_low_dcr = min_fm_ratio / fm_ratio if fm_ratio > 0 else float("inf")
+    fm_ok = min_fm_ratio <= fm_ratio <= max_fm_ratio
+
+    # Theoretical daily oxygen demand (lb O2/day): Ro = (BOD_rem / 0.68) - 1.42 * Px
+    o2_demand_lb_per_day = max(0.0, (bod_removed_lb_per_day / 0.68) - 1.42 * px_vss_lb_per_day)
+
+    gov_dcr = max(vol_dcr, hrt_dcr, fm_high_dcr, fm_low_dcr)
+    passed = vol_ok and hrt_ok and fm_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "volume_dcr": round(vol_dcr, 4),
+        "hrt_dcr": round(hrt_dcr, 4),
+        "fm_ratio": round(fm_ratio, 3),
+        "actual_srt_days": round(actual_srt_days, 2),
+        "hrt_hours": round(hrt_hours, 2),
+        "v_required_gal": round(v_required_gal, 1),
+        "px_vss_lb_per_day": round(px_vss_lb_per_day, 1),
+        "px_tss_lb_per_day": round(px_tss_lb_per_day, 1),
+        "o2_demand_lb_per_day": round(o2_demand_lb_per_day, 1),
+        "vol_ok": vol_ok,
+        "hrt_ok": hrt_ok,
+        "fm_ok": fm_ok,
+    }

@@ -1,0 +1,9 @@
+{
+  "score": 98.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_activated_sludge_aeration_basin",
+    "rationale": "Evaluates biological wastewater aeration basin sizing against Ten States Standards (GLUMRB) and Metcalf & Eddy criteria for hydraulic retention time (HRT), solids retention time (SRT / sludge age), food-to-microorganism (F/M) ratio, net sludge yield, and oxygen demand.",
+    "model": "gemini-3.8-flash"
+  }
+}
