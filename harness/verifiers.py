@@ -9927,3 +9927,128 @@ def verify_aci_smf_beam_column_joint(
         "strong_column_ok": strong_column_ok,
         "spacing_ok": spacing_ok,
     }
+
+
+def verify_fhwa_culvert_inlet_control(
+    discharge_cfs: float,
+    culvert_diameter_ft: float,
+    culvert_shape: str = "circular",
+    inlet_edge_type: str = "square_edge",
+    box_span_ft: float = 0.0,
+    slope_ft_per_ft: float = 0.02,
+    max_allowable_headwater_ft: float = 0.0,
+    max_hw_over_d: float = 1.5,
+    num_barrels: int = 1,
+) -> Dict[str, Any]:
+    """FHWA HDS-5 culvert inlet-control headwater depth (HW/D) and highway conveyance capacity gate."""
+    scalars = [
+        discharge_cfs,
+        culvert_diameter_ft,
+        box_span_ft,
+        slope_ft_per_ft,
+        max_allowable_headwater_ft,
+        max_hw_over_d,
+        float(num_barrels),
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if discharge_cfs < 0:
+        return {"pass": False, "reason": "negative_flow_input"}
+    if culvert_diameter_ft <= 0 or max_hw_over_d <= 0 or num_barrels < 1:
+        return {"pass": False, "reason": "non_positive_geometry_or_barrels"}
+    if slope_ft_per_ft < 0 or max_allowable_headwater_ft < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+
+    shape_clean = culvert_shape.strip().lower()
+    if shape_clean not in ("circular", "pipe", "box", "rectangular"):
+        return {"pass": False, "reason": "invalid_culvert_shape"}
+    is_box = shape_clean in ("box", "rectangular")
+
+    if is_box:
+        if box_span_ft <= 0.0:
+            return {"pass": False, "reason": "missing_or_non_positive_box_span"}
+        d_ft = culvert_diameter_ft
+        w_ft = box_span_ft
+        area_per_barrel = d_ft * w_ft
+    else:
+        d_ft = culvert_diameter_ft
+        area_per_barrel = (math.pi * (d_ft**2)) / 4.0
+
+    # FHWA HDS-5 Table A.1 Inlet Control Constants: (K, M, c, Y)
+    edge_clean = inlet_edge_type.strip().lower().replace(" ", "_").replace("-", "_")
+    coefficients: Dict[str, Tuple[float, float, float, float]] = {
+        "circular_square_edge": (0.0098, 2.00, 0.0398, 0.67),
+        "circular_grooved_end": (0.0078, 2.00, 0.0292, 0.74),
+        "circular_groove_end": (0.0078, 2.00, 0.0292, 0.74),
+        "circular_projecting": (0.0340, 1.50, 0.0553, 0.54),
+        "circular_mitered": (0.0210, 1.33, 0.0463, 0.75),
+        "box_square_edge_headwall": (0.0610, 0.67, 0.0400, 0.80),
+        "box_square_edge": (0.0610, 0.67, 0.0400, 0.80),
+        "box_flared_wingwalls_45deg": (0.0260, 1.00, 0.0347, 0.81),
+        "box_flared_wingwalls": (0.0260, 1.00, 0.0347, 0.81),
+        "box_chamfered_top_edge": (0.0375, 0.79, 0.0317, 0.82),
+    }
+
+    key_default = "box_square_edge_headwall" if is_box else "circular_square_edge"
+    edge_lookup = f"box_{edge_clean}" if is_box and not edge_clean.startswith("box_") else edge_clean
+    if not is_box and not edge_lookup.startswith("circular_"):
+        edge_lookup = f"circular_{edge_lookup}"
+
+    if edge_lookup in coefficients:
+        k_const, m_const, c_const, y_const = coefficients[edge_lookup]
+    elif key_default in coefficients:
+        k_const, m_const, c_const, y_const = coefficients[key_default]
+    else:
+        return {"pass": False, "reason": "invalid_inlet_edge_type"}
+
+    q_per_barrel = discharge_cfs / float(num_barrels)
+    if q_per_barrel == 0.0:
+        return {
+            "pass": True,
+            "dcr": 0.0,
+            "hw_depth_ft": 0.0,
+            "hw_over_d": 0.0,
+            "flow_regime": "dry",
+            "discharge_per_barrel_cfs": 0.0,
+        }
+
+    # Dimensionless discharge intensity parameter: Q / (A * D^0.5)
+    q_param = q_per_barrel / (area_per_barrel * math.sqrt(d_ft))
+
+    # FHWA HDS-5 Eq. 3-1 & 3-2 (Unsubmerged) and Eq. 3-3 & 3-4 (Submerged)
+    slope_term = 0.50 * slope_ft_per_ft
+    if q_param <= 3.5:
+        flow_regime = "unsubmerged"
+        hw_over_d = k_const * (q_param**m_const)
+    elif q_param >= 4.0:
+        flow_regime = "submerged"
+        hw_over_d = c_const * (q_param**2) + y_const - slope_term
+    else:
+        flow_regime = "transitional"
+        hw_35 = k_const * (3.5**m_const)
+        hw_40 = c_const * (4.0**2) + y_const - slope_term
+        frac = (q_param - 3.5) / 0.50
+        hw_over_d = hw_35 + frac * (hw_40 - hw_35)
+
+    hw_depth_ft = hw_over_d * d_ft
+
+    # Check allowable headwater thresholds
+    if max_allowable_headwater_ft > 0.0:
+        hw_allowable_ft = max_allowable_headwater_ft
+    else:
+        hw_allowable_ft = max_hw_over_d * d_ft
+
+    dcr = hw_depth_ft / hw_allowable_ft if hw_allowable_ft > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "hw_depth_ft": round(hw_depth_ft, 2),
+        "hw_over_d": round(hw_over_d, 3),
+        "hw_allowable_ft": round(hw_allowable_ft, 2),
+        "q_param": round(q_param, 3),
+        "flow_regime": flow_regime,
+        "q_per_barrel_cfs": round(q_per_barrel, 2),
+        "barrel_area_sqft": round(area_per_barrel, 2),
+    }

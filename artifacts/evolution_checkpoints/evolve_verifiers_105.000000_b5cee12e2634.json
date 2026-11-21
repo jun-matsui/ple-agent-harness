@@ -1,0 +1,9 @@
+{
+  "score": 105.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_fhwa_culvert_inlet_control",
+    "rationale": "Evaluates FHWA Hydraulic Design Series No. 5 (HDS-5) culvert inlet control hydraulics across unsubmerged, transitional, and submerged flow regimes to verify headwater depth (HW/D) and prevent highway embankment overtopping.",
+    "model": "gemini-3.8-flash"
+  }
+}

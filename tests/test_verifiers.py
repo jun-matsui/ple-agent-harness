@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_fhwa_culvert_inlet_control,
     verify_aci_smf_beam_column_joint,
     verify_aisc_reduced_beam_section,
     verify_nec_box_fill,
@@ -9445,6 +9446,87 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_geometry_or_material")
+
+
+    def test_fhwa_culvert_inlet_control(self) -> None:
+        from harness.verifiers import verify_fhwa_culvert_inlet_control
+
+        # Standard passing 48-inch (4.0 ft) concrete circular culvert in unsubmerged regime
+        # D = 4.0 ft, A = 12.566 sqft, Q = 70 cfs -> q_param = 70 / (12.566 * 2) = 2.785 <= 3.5
+        res_pass = verify_fhwa_culvert_inlet_control(
+            discharge_cfs=70.0,
+            culvert_diameter_ft=4.0,
+            culvert_shape="circular",
+            inlet_edge_type="square_edge",
+            max_hw_over_d=1.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["flow_regime"], "unsubmerged")
+        self.assertAlmostEqual(res_pass["q_param"], 2.785, places=2)
+        self.assertAlmostEqual(res_pass["hw_over_d"], 0.0098 * (2.785**2), places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+
+        # Submerged flow regime in twin 6 ft x 4 ft reinforced concrete box culvert
+        res_box_sub = verify_fhwa_culvert_inlet_control(
+            discharge_cfs=450.0,
+            culvert_diameter_ft=4.0,
+            box_span_ft=6.0,
+            culvert_shape="box",
+            inlet_edge_type="flared_wingwalls",
+            num_barrels=2,
+            max_allowable_headwater_ft=6.5,
+        )
+        self.assertTrue(res_box_sub["pass"])
+        self.assertEqual(res_box_sub["flow_regime"], "submerged")
+        self.assertGreaterEqual(res_box_sub["q_param"], 4.0)
+        self.assertLessEqual(res_box_sub["hw_depth_ft"], 6.5)
+        self.assertLess(res_box_sub["dcr"], 1.0)
+
+        # Headwater depth exceeding maximum allowable limit failure (DCR > 1.0)
+        res_overtop = verify_fhwa_culvert_inlet_control(
+            discharge_cfs=180.0,
+            culvert_diameter_ft=3.0,
+            culvert_shape="circular",
+            max_hw_over_d=1.2,
+        )
+        self.assertFalse(res_overtop["pass"])
+        self.assertGreater(res_overtop["hw_over_d"], 1.2)
+        self.assertGreater(res_overtop["dcr"], 1.0)
+
+        # Box culvert missing span dimension error
+        res_missing_span = verify_fhwa_culvert_inlet_control(
+            discharge_cfs=100.0,
+            culvert_diameter_ft=4.0,
+            culvert_shape="box",
+            box_span_ft=0.0,
+        )
+        self.assertFalse(res_missing_span["pass"])
+        self.assertEqual(res_missing_span["reason"], "missing_or_non_positive_box_span")
+
+        # NaN input error handling
+        res_nan = verify_fhwa_culvert_inlet_control(
+            discharge_cfs=float("nan"),
+            culvert_diameter_ft=4.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Negative discharge error handling
+        res_neg = verify_fhwa_culvert_inlet_control(
+            discharge_cfs=-50.0,
+            culvert_diameter_ft=4.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_flow_input")
+
+        # Invalid shape error handling
+        res_shape = verify_fhwa_culvert_inlet_control(
+            discharge_cfs=50.0,
+            culvert_diameter_ft=4.0,
+            culvert_shape="parabolic_arch",
+        )
+        self.assertFalse(res_shape["pass"])
+        self.assertEqual(res_shape["reason"], "invalid_culvert_shape")
 
 
 if __name__ == "__main__":
