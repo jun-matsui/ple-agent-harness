@@ -10210,3 +10210,137 @@ def verify_fhwa_culvert_outlet_control(
         "ho_tailwater_equiv_ft": round(h_o_ft, 2),
         "q_per_barrel_cfs": round(q_per_barrel, 2),
     }
+
+
+def verify_aashto_rigid_pavement_slab_thickness(
+    design_esals: float,
+    slab_thickness_in: float,
+    modulus_of_rupture_psi: float = 650.0,
+    concrete_modulus_psi: float = 4000000.0,
+    modulus_of_subgrade_reaction_pci: float = 200.0,
+    load_transfer_coeff_j: float = 3.2,
+    drainage_coefficient_cd: float = 1.0,
+    reliability_pct: float = 95.0,
+    overall_std_dev: float = 0.35,
+    initial_psi: float = 4.5,
+    terminal_psi: float = 2.5,
+    min_slab_thickness_in: float = 6.0,
+    zr_override: float = 0.0,
+) -> Dict[str, Any]:
+    """AASHTO (1993) Section 3.2 rigid concrete pavement (JPCP/JRCP) slab thickness, ESAL capacity, and serviceability gate."""
+    scalars = [
+        design_esals,
+        slab_thickness_in,
+        modulus_of_rupture_psi,
+        concrete_modulus_psi,
+        modulus_of_subgrade_reaction_pci,
+        load_transfer_coeff_j,
+        drainage_coefficient_cd,
+        reliability_pct,
+        overall_std_dev,
+        initial_psi,
+        terminal_psi,
+        min_slab_thickness_in,
+        zr_override,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if design_esals <= 0:
+        return {"pass": False, "reason": "non_positive_traffic"}
+    if slab_thickness_in <= 0:
+        return {"pass": False, "reason": "non_positive_slab_thickness"}
+    if (
+        min(
+            modulus_of_rupture_psi,
+            concrete_modulus_psi,
+            modulus_of_subgrade_reaction_pci,
+            load_transfer_coeff_j,
+            drainage_coefficient_cd,
+            overall_std_dev,
+            min_slab_thickness_in,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_material_or_design_parameter"}
+    if initial_psi <= terminal_psi:
+        return {"pass": False, "reason": "initial_serviceability_not_above_terminal"}
+    if initial_psi > 5.0 or terminal_psi < 1.0:
+        return {"pass": False, "reason": "serviceability_index_out_of_bounds"}
+
+    thickness_ok = slab_thickness_in >= min_slab_thickness_in
+
+    # AASHTO standard normal deviate (Z_R) lookup table
+    zr_table = {
+        50.0: 0.000,
+        70.0: -0.524,
+        75.0: -0.674,
+        80.0: -0.841,
+        85.0: -1.036,
+        90.0: -1.282,
+        95.0: -1.645,
+        98.0: -2.054,
+        99.0: -2.326,
+        99.9: -3.090,
+    }
+    if zr_override < 0.0:
+        zr = zr_override
+    elif reliability_pct in zr_table:
+        zr = zr_table[reliability_pct]
+    elif 50.0 <= reliability_pct <= 99.9:
+        sorted_keys = sorted(zr_table.keys())
+        idx = next(i for i, k in enumerate(sorted_keys) if k >= reliability_pct)
+        k_lower, k_upper = sorted_keys[idx - 1], sorted_keys[idx]
+        frac = (reliability_pct - k_lower) / (k_upper - k_lower)
+        zr = zr_table[k_lower] + frac * (zr_table[k_upper] - zr_table[k_lower])
+    else:
+        return {"pass": False, "reason": "invalid_reliability_percentage"}
+
+    d = slab_thickness_in
+    d_term = d ** 0.75
+    if d_term <= 1.132:
+        return {"pass": False, "reason": "slab_thickness_too_small"}
+
+    rad_k = concrete_modulus_psi / modulus_of_subgrade_reaction_pci
+    sub_term = 18.42 / (rad_k ** 0.25)
+    denom_stress_bracket = d_term - sub_term
+    if denom_stress_bracket <= 0:
+        return {"pass": False, "reason": "slab_too_thin_for_subgrade"}
+
+    stress_num = modulus_of_rupture_psi * drainage_coefficient_cd * (d_term - 1.132)
+    stress_den = 215.63 * load_transfer_coeff_j * denom_stress_bracket
+    stress_ratio = stress_num / stress_den
+    if stress_ratio <= 0:
+        return {"pass": False, "reason": "invalid_stress_ratio"}
+
+    delta_psi = initial_psi - terminal_psi
+    psi_term_num = math.log10(delta_psi / (4.5 - 1.5))
+    psi_term_den = 1.0 + (1.624e7 / ((d + 1.0) ** 8.46))
+    psi_term = psi_term_num / psi_term_den
+
+    log_w18 = (
+        zr * overall_std_dev
+        + 7.35 * math.log10(d + 1.0)
+        - 0.06
+        + psi_term
+        + (4.22 - 0.32 * terminal_psi) * math.log10(stress_ratio)
+    )
+    w18_allowable = 10.0 ** log_w18
+
+    esal_dcr = design_esals / w18_allowable if w18_allowable > 0 else float("inf")
+    traffic_ok = esal_dcr <= 1.0
+
+    thick_dcr = min_slab_thickness_in / slab_thickness_in
+    gov_dcr = max(esal_dcr, thick_dcr)
+    passed = traffic_ok and thickness_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "w18_allowable_esals": round(w18_allowable, 1),
+        "design_esals": round(design_esals, 1),
+        "slab_thickness_in": round(slab_thickness_in, 2),
+        "min_slab_thickness_in": round(min_slab_thickness_in, 2),
+        "zr": round(zr, 4),
+        "traffic_ok": traffic_ok,
+        "thickness_ok": thickness_ok,
+    }

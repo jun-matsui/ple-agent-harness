@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aashto_rigid_pavement_slab_thickness,
     verify_fhwa_culvert_outlet_control,
     verify_fhwa_culvert_inlet_control,
     verify_aci_smf_beam_column_joint,
@@ -9636,6 +9637,76 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_shape["pass"])
         self.assertEqual(res_inv_shape["reason"], "invalid_culvert_shape")
+
+
+    def test_aashto_rigid_pavement_slab_thickness(self) -> None:
+        from harness.verifiers import verify_aashto_rigid_pavement_slab_thickness
+
+        # Standard passing 9.0-inch JPCP under 3.5M ESALs
+        res_pass = verify_aashto_rigid_pavement_slab_thickness(
+            design_esals=3500000.0,
+            slab_thickness_in=9.0,
+            modulus_of_rupture_psi=650.0,
+            concrete_modulus_psi=4000000.0,
+            modulus_of_subgrade_reaction_pci=200.0,
+            load_transfer_coeff_j=3.2,
+            drainage_coefficient_cd=1.0,
+            reliability_pct=95.0,
+            overall_std_dev=0.35,
+            initial_psi=4.5,
+            terminal_psi=2.5,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["zr"], -1.645, places=3)
+        self.assertGreater(res_pass["w18_allowable_esals"], 4000000.0)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["traffic_ok"])
+        self.assertTrue(res_pass["thickness_ok"])
+
+        # Traffic overload failure (6M ESALs on 9.0-inch slab)
+        res_fail_traffic = verify_aashto_rigid_pavement_slab_thickness(
+            design_esals=6000000.0,
+            slab_thickness_in=9.0,
+        )
+        self.assertFalse(res_fail_traffic["pass"])
+        self.assertFalse(res_fail_traffic["traffic_ok"])
+        self.assertGreater(res_fail_traffic["dcr"], 1.0)
+
+        # Minimum thickness failure (D < 6.0 in)
+        res_fail_thick = verify_aashto_rigid_pavement_slab_thickness(
+            design_esals=100000.0,
+            slab_thickness_in=5.0,
+            min_slab_thickness_in=6.0,
+        )
+        self.assertFalse(res_fail_thick["pass"])
+        self.assertFalse(res_fail_thick["thickness_ok"])
+        self.assertGreater(res_fail_thick["dcr"], 1.0)
+
+        # Initial serviceability <= terminal serviceability error
+        res_psi_err = verify_aashto_rigid_pavement_slab_thickness(
+            design_esals=1000000.0,
+            slab_thickness_in=8.0,
+            initial_psi=2.5,
+            terminal_psi=2.5,
+        )
+        self.assertFalse(res_psi_err["pass"])
+        self.assertEqual(res_psi_err["reason"], "initial_serviceability_not_above_terminal")
+
+        # NaN input error handling
+        res_nan = verify_aashto_rigid_pavement_slab_thickness(
+            design_esals=float("nan"),
+            slab_thickness_in=9.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Non-positive input error handling
+        res_neg = verify_aashto_rigid_pavement_slab_thickness(
+            design_esals=-500000.0,
+            slab_thickness_in=9.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_traffic")
 
 
 if __name__ == "__main__":

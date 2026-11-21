@@ -1,0 +1,9 @@
+{
+  "score": 107.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aashto_rigid_pavement_slab_thickness",
+    "rationale": "Implements the AASHTO (1993) empirical rigid concrete pavement design equation to verify portland cement concrete (PCC/JPCP) slab thickness against design 18-kip ESAL capacity, load transfer, and serviceability loss.",
+    "model": "gemini-3.8-flash"
+  }
+}
