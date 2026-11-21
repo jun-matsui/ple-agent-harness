@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_anchor_bolt_shear,
     verify_tms402_masonry_shear_wall,
     verify_conductor_short_circuit_withstand,
     verify_activated_sludge_aeration_basin,
@@ -8995,6 +8996,98 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_input")
+
+
+    def test_aci_anchor_bolt_shear(self) -> None:
+        from harness.verifiers import verify_aci_anchor_bolt_shear
+
+        # Standard passing anchor bolt shear check governed by steel shear
+        res_pass = verify_aci_anchor_bolt_shear(
+            vu_kips=6.0,
+            anchor_dia_in=0.75,
+            hef_in=8.0,
+            edge_distance_ca1_in=15.0,
+            fc_psi=4000.0,
+            futa_ksi=58.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["governing_limit_state"], "steel_shear")
+        self.assertAlmostEqual(res_pass["phi_vsa_kips"], 7.57, places=1)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["shear_ok"])
+
+        # Reduced edge distance where concrete breakout governs and fails
+        res_breakout_fail = verify_aci_anchor_bolt_shear(
+            vu_kips=5.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_ca1_in=4.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_breakout_fail["pass"])
+        self.assertEqual(res_breakout_fail["governing_limit_state"], "concrete_breakout")
+        self.assertAlmostEqual(res_breakout_fail["phi_vcb_kips"], 3.19, places=2)
+        self.assertGreater(res_breakout_fail["dcr"], 1.0)
+
+        # Combined tension and shear interaction check (ACI 17.8 Eq. 17.8.3)
+        res_inter_pass = verify_aci_anchor_bolt_shear(
+            vu_kips=5.0,
+            anchor_dia_in=0.75,
+            hef_in=8.0,
+            edge_distance_ca1_in=15.0,
+            fc_psi=4000.0,
+            nu_kips=6.0,
+            phi_nn_kips=12.0,
+        )
+        self.assertTrue(res_inter_pass["pass"])
+        self.assertIsNotNone(res_inter_pass["interaction_dcr"])
+        self.assertLess(res_inter_pass["interaction_dcr"], 1.0)
+
+        # Interaction failure when both tension and shear are high
+        res_inter_fail = verify_aci_anchor_bolt_shear(
+            vu_kips=6.5,
+            anchor_dia_in=0.75,
+            hef_in=8.0,
+            edge_distance_ca1_in=15.0,
+            fc_psi=4000.0,
+            nu_kips=10.0,
+            phi_nn_kips=12.0,
+        )
+        self.assertFalse(res_inter_fail["pass"])
+        self.assertFalse(res_inter_fail["interaction_ok"])
+        self.assertGreater(res_inter_fail["interaction_dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_aci_anchor_bolt_shear(
+            vu_kips=float("nan"),
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_ca1_in=10.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_anchor_bolt_shear(
+            vu_kips=-5.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_ca1_in=10.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_futa_err = verify_aci_anchor_bolt_shear(
+            vu_kips=5.0,
+            anchor_dia_in=0.75,
+            hef_in=6.0,
+            edge_distance_ca1_in=10.0,
+            fc_psi=4000.0,
+            futa_ksi=150.0,
+        )
+        self.assertFalse(res_futa_err["pass"])
+        self.assertEqual(res_futa_err["reason"], "futa_exceeds_code_limit")
 
 
 if __name__ == "__main__":

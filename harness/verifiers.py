@@ -9366,3 +9366,176 @@ def verify_tms402_masonry_shear_wall(
         "capacity_ok": capacity_ok,
         "detailing_ok": detailing_ok,
     }
+
+
+def verify_aci_anchor_bolt_shear(
+    vu_kips: float,
+    anchor_dia_in: float,
+    hef_in: float,
+    edge_distance_ca1_in: float,
+    fc_psi: float,
+    edge_distance_ca2_in: float = 0.0,
+    member_thickness_ha_in: float = 0.0,
+    futa_ksi: float = 58.0,
+    anchor_type: str = "cast_in_headed",
+    is_cracked_concrete: bool = True,
+    load_bearing_length_le_in: float = 0.0,
+    nu_kips: float = 0.0,
+    phi_nn_kips: float = 0.0,
+    phi_steel: float = 0.65,
+    phi_concrete: float = 0.70,
+) -> Dict[str, Any]:
+    """ACI 318-19 Chapter 17 LRFD shear capacity (steel shear, concrete edge breakout, pryout) and Section 17.8 tension-shear interaction check."""
+    scalars = [
+        vu_kips,
+        anchor_dia_in,
+        hef_in,
+        edge_distance_ca1_in,
+        fc_psi,
+        edge_distance_ca2_in,
+        member_thickness_ha_in,
+        futa_ksi,
+        load_bearing_length_le_in,
+        nu_kips,
+        phi_nn_kips,
+        phi_steel,
+        phi_concrete,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if vu_kips < 0 or nu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(
+            anchor_dia_in,
+            hef_in,
+            edge_distance_ca1_in,
+            fc_psi,
+            futa_ksi,
+            phi_steel,
+            phi_concrete,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if edge_distance_ca2_in < 0 or member_thickness_ha_in < 0 or load_bearing_length_le_in < 0 or phi_nn_kips < 0:
+        return {"pass": False, "reason": "negative_geometry_or_capacity"}
+    if futa_ksi > 125.0:
+        return {"pass": False, "reason": "futa_exceeds_code_limit"}
+
+    atype = anchor_type.strip().lower().replace(" ", "_").replace("-", "_")
+    if atype not in ("cast_in_headed", "post_installed"):
+        return {"pass": False, "reason": "invalid_anchor_type"}
+
+    # 1. Steel strength of anchor in shear (ACI 318-19 Section 17.7.1)
+    threads_per_inch: Dict[float, float] = {
+        0.50: 13.0,
+        0.625: 11.0,
+        0.75: 10.0,
+        0.875: 9.0,
+        1.00: 8.0,
+        1.125: 7.0,
+        1.25: 7.0,
+        1.50: 6.0,
+    }
+    if anchor_dia_in in threads_per_inch:
+        n_t = threads_per_inch[anchor_dia_in]
+        ase_v = (math.pi / 4.0) * ((anchor_dia_in - (0.9743 / n_t)) ** 2)
+    else:
+        ase_v = 0.75 * (math.pi * (anchor_dia_in**2)) / 4.0
+
+    vsa_kips = 0.60 * ase_v * futa_ksi
+    phi_vsa = phi_steel * vsa_kips
+
+    # 2. Concrete breakout strength in shear towards edge ca1 (ACI 318-19 Section 17.7.2)
+    da = anchor_dia_in
+    ca1 = edge_distance_ca1_in
+    le = min(load_bearing_length_le_in if load_bearing_length_le_in > 0.0 else hef_in, 8.0 * da)
+    sqrt_fc = math.sqrt(fc_psi)
+    lambda_a = 1.0
+
+    vb1 = (7.0 * ((le / da) ** 0.2) * math.sqrt(da)) * lambda_a * sqrt_fc * (ca1**1.5) / 1000.0
+    vb2 = 9.0 * lambda_a * sqrt_fc * (ca1**1.5) / 1000.0
+    vb_kips = min(vb1, vb2)
+
+    avc0 = 4.5 * (ca1**2)
+    if edge_distance_ca2_in > 0.0 and edge_distance_ca2_in < 1.5 * ca1:
+        w = 1.5 * ca1 + edge_distance_ca2_in
+        psi_ed_v = 0.70 + 0.30 * (edge_distance_ca2_in / (1.5 * ca1))
+    else:
+        w = 3.0 * ca1
+        psi_ed_v = 1.0
+
+    if member_thickness_ha_in > 0.0 and member_thickness_ha_in < 1.5 * ca1:
+        h = member_thickness_ha_in
+        psi_h_v = math.sqrt((1.5 * ca1) / member_thickness_ha_in)
+    else:
+        h = 1.5 * ca1
+        psi_h_v = 1.0
+
+    avc = w * h
+    psi_c_v = 1.0 if is_cracked_concrete else 1.40
+
+    vcb_kips = (avc / avc0) * psi_ed_v * psi_c_v * psi_h_v * vb_kips
+    phi_vcb = phi_concrete * vcb_kips
+
+    # 3. Concrete pryout strength in shear (ACI 318-19 Section 17.7.3)
+    kcp = 1.0 if hef_in < 2.5 else 2.0
+    kc = 24.0 if atype == "cast_in_headed" else 17.0
+    nb_kips = (kc * lambda_a * sqrt_fc * (hef_in**1.5)) / 1000.0
+
+    c_crit = 1.5 * hef_in
+    if ca1 < c_crit:
+        anc = (c_crit + ca1) * (3.0 * hef_in)
+        psi_ed_n = 0.70 + 0.30 * (ca1 / c_crit)
+    else:
+        anc = 9.0 * (hef_in**2)
+        psi_ed_n = 1.0
+
+    anco = 9.0 * (hef_in**2)
+    psi_c_n = 1.0 if is_cracked_concrete else (1.25 if atype == "cast_in_headed" else 1.40)
+    ncb_kips = (anc / anco) * psi_ed_n * psi_c_n * nb_kips
+    vcp_kips = kcp * ncb_kips
+    phi_vcp = phi_concrete * vcp_kips
+
+    shear_caps: Dict[str, float] = {
+        "steel_shear": phi_vsa,
+        "concrete_breakout": phi_vcb,
+        "concrete_pryout": phi_vcp,
+    }
+    gov_limit = min(shear_caps, key=shear_caps.get)
+    phi_vn_kips = shear_caps[gov_limit]
+    shear_dcr = vu_kips / phi_vn_kips if phi_vn_kips > 0 else float("inf")
+    shear_ok = shear_dcr <= 1.0
+
+    # 4. Tension-shear interaction (ACI 318-19 Section 17.8)
+    interaction_dcr = None
+    interaction_ok = True
+    if nu_kips > 0.0 and phi_nn_kips > 0.0:
+        tension_dcr = nu_kips / phi_nn_kips
+        if tension_dcr <= 0.20:
+            interaction_dcr = shear_dcr
+        elif shear_dcr <= 0.20:
+            interaction_dcr = tension_dcr
+        else:
+            interaction_dcr = (tension_dcr ** (5.0 / 3.0)) + (shear_dcr ** (5.0 / 3.0))
+        interaction_ok = interaction_dcr <= 1.0
+
+    gov_dcr = max(shear_dcr, interaction_dcr) if interaction_dcr is not None else shear_dcr
+    passed = shear_ok and interaction_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "shear_dcr": round(shear_dcr, 4),
+        "interaction_dcr": round(interaction_dcr, 4) if interaction_dcr is not None else None,
+        "phi_vn_kips": round(phi_vn_kips, 2),
+        "phi_vsa_kips": round(phi_vsa, 2),
+        "phi_vcb_kips": round(phi_vcb, 2),
+        "phi_vcp_kips": round(phi_vcp, 2),
+        "vb_kips": round(vb_kips, 2),
+        "avc_sqin": round(avc, 2),
+        "governing_limit_state": gov_limit,
+        "shear_ok": shear_ok,
+        "interaction_ok": interaction_ok,
+    }

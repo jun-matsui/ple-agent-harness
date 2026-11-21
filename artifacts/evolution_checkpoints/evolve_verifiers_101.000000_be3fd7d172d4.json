@@ -1,0 +1,9 @@
+{
+  "score": 101.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_anchor_bolt_shear",
+    "rationale": "Evaluates ACI 318-19 Chapter 17 anchorage in concrete for shear limit states (steel shear rupture, concrete edge breakout, and concrete pryout) along with Section 17.8 combined tension-shear interaction, addressing a frequent physical engineering code-gate evaluation gap.",
+    "model": "gemini-3.8-flash"
+  }
+}
