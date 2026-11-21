@@ -9128,3 +9128,109 @@ def verify_activated_sludge_aeration_basin(
         "hrt_ok": hrt_ok,
         "fm_ok": fm_ok,
     }
+
+
+def verify_conductor_short_circuit_withstand(
+    fault_current_a: float,
+    clearing_time_s: float,
+    conductor_kcmil: float = 0.0,
+    conductor_cmil: float = 0.0,
+    conductor_material: str = "copper",
+    insulation_type: str = "xlpe",
+    initial_temp_c: float = 75.0,
+    max_temp_override_c: float = 0.0,
+) -> Dict[str, Any]:
+    """ICEA P-32-382 / IEEE 242 & NEC 110.10 conductor short-circuit thermal withstand gate."""
+    scalars = [
+        fault_current_a,
+        clearing_time_s,
+        conductor_kcmil,
+        conductor_cmil,
+        initial_temp_c,
+        max_temp_override_c,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if fault_current_a <= 0:
+        return {"pass": False, "reason": "non_positive_fault_current"}
+    if clearing_time_s <= 0:
+        return {"pass": False, "reason": "non_positive_clearing_time"}
+    if initial_temp_c < 0 or max_temp_override_c < 0:
+        return {"pass": False, "reason": "negative_temperature"}
+
+    # Resolve cross-sectional area in circular mils (cmil)
+    if conductor_cmil > 0.0:
+        cmil = conductor_cmil
+    elif conductor_kcmil > 0.0:
+        cmil = conductor_kcmil * 1000.0
+    else:
+        return {"pass": False, "reason": "non_positive_conductor_area"}
+
+    # Conductor material thermodynamic constants (ICEA P-32-382 / IEEE 242)
+    mat_clean = conductor_material.strip().lower().replace(" ", "_")
+    if mat_clean in ("copper", "cu"):
+        mat_norm = "copper"
+        k_const = 0.0297
+        t0 = 234.5
+    elif mat_clean in ("aluminum", "al"):
+        mat_norm = "aluminum"
+        k_const = 0.0125
+        t0 = 228.1
+    else:
+        return {"pass": False, "reason": "invalid_conductor_material"}
+
+    # Insulation maximum short-circuit temperature limit
+    ins_clean = insulation_type.strip().lower().replace("-", "_").replace(" ", "_")
+    if max_temp_override_c > 0.0:
+        t2 = max_temp_override_c
+        ins_norm = "custom"
+    elif ins_clean in ("xlpe", "epr", "thermoset", "cross_linked_polyethylene", "xhhw", "rhw"):
+        t2 = 250.0
+        ins_norm = "thermoset_xlpe"
+    elif ins_clean in ("pvc", "thhn", "thwn", "thermoplastic", "tw"):
+        t2 = 150.0
+        ins_norm = "thermoplastic_pvc"
+    else:
+        return {"pass": False, "reason": "invalid_insulation_type"}
+
+    if initial_temp_c >= t2:
+        return {"pass": False, "reason": "initial_temp_exceeds_rating"}
+
+    # Thermodynamic log ratio term
+    log_ratio = math.log10((t2 + t0) / (initial_temp_c + t0))
+    term = k_const * log_ratio
+    if term <= 0:
+        return {"pass": False, "reason": "invalid_thermal_limits"}
+
+    # Maximum allowable fault current for specified clearing time (A)
+    i_max_allowable_a = cmil * math.sqrt(term / clearing_time_s)
+
+    # Minimum required conductor area for specified fault duty
+    cmil_required = fault_current_a * math.sqrt(clearing_time_s / term)
+    kcmil_required = cmil_required / 1000.0
+
+    # Maximum allowable clearing time before insulation thermal damage (s)
+    t_max_clearing_s = ((cmil / fault_current_a) ** 2) * term
+
+    # Final conductor temperature reached during fault duration (°C)
+    log_term = (clearing_time_s * ((fault_current_a / cmil) ** 2)) / k_const
+    if log_term > 10.0:
+        final_temp_c = float("inf")
+    else:
+        final_temp_c = (initial_temp_c + t0) * (10.0 ** log_term) - t0
+
+    dcr = fault_current_a / i_max_allowable_a if i_max_allowable_a > 0 else float("inf")
+    passed = dcr <= 1.0
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "i_max_allowable_a": round(i_max_allowable_a, 2),
+        "kcmil_required": round(kcmil_required, 2),
+        "cmil_required": round(cmil_required, 1),
+        "t_max_clearing_s": round(t_max_clearing_s, 4),
+        "final_temp_c": round(final_temp_c, 1) if not math.isinf(final_temp_c) else float("inf"),
+        "max_temp_rating_c": round(t2, 1),
+        "conductor_material": mat_norm,
+        "insulation_type": ins_norm,
+    }

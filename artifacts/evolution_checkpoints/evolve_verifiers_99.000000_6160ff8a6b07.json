@@ -1,0 +1,9 @@
+{
+  "score": 99.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_conductor_short_circuit_withstand",
+    "rationale": "ICEA P-32-382, IEEE 242 (Buff Book Sec 9.3), and NEC 110.10 require power conductors to thermally withstand available short-circuit currents until upstream protective devices clear. This verifier implements the closed-form adiabatic thermodynamic formulation for copper and aluminum conductors across thermoplastic and thermoset insulation systems, checking DCR, required cross-sectional area, allowable clearing time, and peak fault temperature.",
+    "model": "gemini-3.8-flash"
+  }
+}

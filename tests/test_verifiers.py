@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_conductor_short_circuit_withstand,
     verify_activated_sludge_aeration_basin,
     verify_wastewater_clarifier_sizing,
     verify_hcm_freeway_level_of_service,
@@ -8777,6 +8778,109 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_fm_limits["pass"])
         self.assertEqual(res_fm_limits["reason"], "invalid_fm_limits")
+
+
+    def test_conductor_short_circuit_withstand(self) -> None:
+        from harness.verifiers import verify_conductor_short_circuit_withstand
+
+        # Standard passing 250 kcmil Cu conductor with XLPE insulation (T2=250C)
+        # 30 kA fault for 0.05 seconds (3 cycles) -> i_max ~ 85.0 kA -> pass
+        res_pass = verify_conductor_short_circuit_withstand(
+            fault_current_a=30000.0,
+            clearing_time_s=0.05,
+            conductor_kcmil=250.0,
+            conductor_material="copper",
+            insulation_type="xlpe",
+            initial_temp_c=75.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertGreater(res_pass["i_max_allowable_a"], 30000.0)
+        self.assertLess(res_pass["kcmil_required"], 250.0)
+        self.assertGreater(res_pass["t_max_clearing_s"], 0.05)
+        self.assertLess(res_pass["final_temp_c"], 250.0)
+
+        # Failure: thermoplastic (PVC/THHN, T2=150C) with 45 kA for 0.15s (9 cycles) on 250 kcmil
+        res_fail = verify_conductor_short_circuit_withstand(
+            fault_current_a=45000.0,
+            clearing_time_s=0.15,
+            conductor_kcmil=250.0,
+            conductor_material="copper",
+            insulation_type="pvc",
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertGreater(res_fail["dcr"], 1.0)
+        self.assertGreater(res_fail["final_temp_c"], 150.0)
+
+        # Aluminum conductor verification
+        res_al = verify_conductor_short_circuit_withstand(
+            fault_current_a=20000.0,
+            clearing_time_s=0.05,
+            conductor_kcmil=350.0,
+            conductor_material="aluminum",
+            insulation_type="xlpe",
+        )
+        self.assertTrue(res_al["pass"])
+        self.assertEqual(res_al["conductor_material"], "aluminum")
+
+        # Direct circular mil input override
+        res_cmil = verify_conductor_short_circuit_withstand(
+            fault_current_a=25000.0,
+            clearing_time_s=0.05,
+            conductor_kcmil=0.0,
+            conductor_cmil=250000.0,
+            insulation_type="xlpe",
+        )
+        self.assertTrue(res_cmil["pass"])
+        self.assertAlmostEqual(res_cmil["dcr"], res_pass["dcr"] * (25000.0 / 30000.0), places=3)
+
+        # Temperature override check
+        res_custom_temp = verify_conductor_short_circuit_withstand(
+            fault_current_a=20000.0,
+            clearing_time_s=0.05,
+            conductor_kcmil=250.0,
+            max_temp_override_c=200.0,
+        )
+        self.assertEqual(res_custom_temp["max_temp_rating_c"], 200.0)
+
+        # Initial temperature exceeds rating error
+        res_temp_err = verify_conductor_short_circuit_withstand(
+            fault_current_a=20000.0,
+            clearing_time_s=0.05,
+            conductor_kcmil=250.0,
+            initial_temp_c=160.0,
+            insulation_type="pvc",
+        )
+        self.assertFalse(res_temp_err["pass"])
+        self.assertEqual(res_temp_err["reason"], "initial_temp_exceeds_rating")
+
+        # Invalid material
+        res_mat_err = verify_conductor_short_circuit_withstand(
+            fault_current_a=20000.0,
+            clearing_time_s=0.05,
+            conductor_kcmil=250.0,
+            conductor_material="silver",
+        )
+        self.assertFalse(res_mat_err["pass"])
+        self.assertEqual(res_mat_err["reason"], "invalid_conductor_material")
+
+        # NaN input
+        res_nan = verify_conductor_short_circuit_withstand(
+            fault_current_a=float("nan"),
+            clearing_time_s=0.05,
+            conductor_kcmil=250.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Non-positive input
+        res_neg = verify_conductor_short_circuit_withstand(
+            fault_current_a=-1000.0,
+            clearing_time_s=0.05,
+            conductor_kcmil=250.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_fault_current")
 
 
 if __name__ == "__main__":
