@@ -9772,3 +9772,158 @@ def verify_aisc_reduced_beam_section(
         "cut_geom_ok": cut_geom_ok,
         "flexure_ok": flexure_ok,
     }
+
+
+def verify_aci_smf_beam_column_joint(
+    col_width_bc_in: float,
+    col_depth_hc_in: float,
+    beam_width_bb_in: float,
+    beam_depth_hb_in: float,
+    as_top_in2: float,
+    fc_psi: float,
+    as_bot_in2: float = 0.0,
+    fy_psi: float = 60000.0,
+    joint_confinement_type: str = "four_faces",
+    sum_mnc_kip_ft: float = 0.0,
+    sum_mnb_kip_ft: float = 0.0,
+    v_col_kips: float = 0.0,
+    story_height_ft: float = 0.0,
+    transverse_spacing_s_in: float = 0.0,
+    lambda_factor: float = 1.0,
+    phi: float = 0.75,
+) -> Dict[str, Any]:
+    """ACI 318-19 Sections 18.7.3 & 18.8 Special Moment Frame (SMF) beam-column joint shear and flexural strength ratio gate."""
+    scalars = [
+        col_width_bc_in,
+        col_depth_hc_in,
+        beam_width_bb_in,
+        beam_depth_hb_in,
+        as_top_in2,
+        fc_psi,
+        as_bot_in2,
+        fy_psi,
+        sum_mnc_kip_ft,
+        sum_mnb_kip_ft,
+        v_col_kips,
+        story_height_ft,
+        transverse_spacing_s_in,
+        lambda_factor,
+        phi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(
+            col_width_bc_in,
+            col_depth_hc_in,
+            beam_width_bb_in,
+            beam_depth_hb_in,
+            as_top_in2,
+            fc_psi,
+            fy_psi,
+            lambda_factor,
+            phi,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if (
+        as_bot_in2 < 0
+        or sum_mnc_kip_ft < 0
+        or sum_mnb_kip_ft < 0
+        or v_col_kips < 0
+        or story_height_ft < 0
+        or transverse_spacing_s_in < 0
+    ):
+        return {"pass": False, "reason": "negative_parameter_input"}
+    if beam_width_bb_in > col_width_bc_in:
+        return {"pass": False, "reason": "beam_width_exceeds_column_width"}
+
+    # 1. Joint Confinement Classification and Shear Coefficient gamma (ACI 318-19 Table 18.8.4.1)
+    conf_clean = joint_confinement_type.strip().lower().replace(" ", "_").replace("-", "_")
+    if conf_clean in ("four_faces", "confined_four_faces", "interior_4_sides"):
+        gamma = 20.0
+    elif conf_clean in (
+        "three_faces_or_two_opposite",
+        "three_faces",
+        "two_opposite",
+        "confined_three_faces",
+        "confined_opposite",
+    ):
+        gamma = 15.0
+    elif conf_clean in ("other", "unconfined", "corner", "roof", "one_face"):
+        gamma = 12.0
+    else:
+        return {"pass": False, "reason": "invalid_confinement_type"}
+
+    # 2. Effective Joint Area Aj (ACI 318-19 Section 18.8.4.3)
+    # bj = min(bc, bb + hc, bb + 2*x) where x is the distance from beam edge to column edge
+    x = (col_width_bc_in - beam_width_bb_in) / 2.0
+    bj = min(col_width_bc_in, beam_width_bb_in + col_depth_hc_in, beam_width_bb_in + 2.0 * x)
+    aj_sqin = bj * col_depth_hc_in
+
+    # 3. Horizontal Joint Shear Demand Vj (ACI 318-19 Section 18.8.2.1)
+    # Expected flexural tensile stress developed in beam reinforcement is 1.25 * fy
+    t1_kips = 1.25 * (fy_psi / 1000.0) * as_top_in2
+    c2_kips = 1.25 * (fy_psi / 1000.0) * as_bot_in2 if as_bot_in2 > 0.0 else 0.0
+
+    # Column shear subtraction Vcol
+    if v_col_kips > 0.0:
+        v_col_eff = v_col_kips
+    elif story_height_ft > 0.0:
+        # Estimate column shear from probable beam moment equilibrium
+        jd_est_in = 0.85 * beam_depth_hb_in
+        m_pr_approx = (t1_kips + c2_kips) * (jd_est_in / 12.0)
+        v_col_eff = m_pr_approx / story_height_ft
+    else:
+        v_col_eff = 0.0
+
+    vj_demand_kips = max(0.0, (t1_kips + c2_kips) - v_col_eff)
+
+    # 4. Nominal and Design Joint Shear Strength (ACI 318-19 Table 18.8.4.1)
+    sqrt_fc = min(math.sqrt(fc_psi), 100.0)
+    vn_kips = (gamma * lambda_factor * sqrt_fc * aj_sqin) / 1000.0
+    phi_vn_kips = phi * vn_kips
+    joint_shear_dcr = vj_demand_kips / phi_vn_kips if phi_vn_kips > 0 else float("inf")
+    joint_shear_ok = joint_shear_dcr <= 1.0
+
+    # 5. Strong-Column / Weak-Beam Flexural Strength Ratio (ACI 318-19 Section 18.7.3.2)
+    # Sum of column nominal flexural strengths >= 1.20 * sum of beam nominal flexural strengths
+    if sum_mnc_kip_ft > 0.0 and sum_mnb_kip_ft > 0.0:
+        col_beam_ratio = sum_mnc_kip_ft / sum_mnb_kip_ft
+        strong_column_ok = col_beam_ratio >= 1.20
+        ratio_dcr = 1.20 / col_beam_ratio if col_beam_ratio > 0 else float("inf")
+    else:
+        col_beam_ratio = None
+        strong_column_ok = True
+        ratio_dcr = None
+
+    # 6. Joint Transverse Confinement Spacing (ACI 318-19 Section 18.8.3.1)
+    spacing_ok = True
+    s_max_in = None
+    if transverse_spacing_s_in > 0.0:
+        s_max_in = min(col_width_bc_in / 4.0, col_depth_hc_in / 4.0, 6.0)
+        spacing_ok = transverse_spacing_s_in <= s_max_in
+
+    dcr_candidates = [joint_shear_dcr]
+    if ratio_dcr is not None:
+        dcr_candidates.append(ratio_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = joint_shear_ok and strong_column_ok and spacing_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "joint_shear_dcr": round(joint_shear_dcr, 4),
+        "v_joint_demand_kips": round(vj_demand_kips, 2),
+        "phi_vn_kips": round(phi_vn_kips, 2),
+        "vn_kips": round(vn_kips, 2),
+        "aj_sqin": round(aj_sqin, 2),
+        "bj_eff_in": round(bj, 2),
+        "gamma": gamma,
+        "col_beam_ratio": round(col_beam_ratio, 3) if col_beam_ratio is not None else None,
+        "s_max_in": round(s_max_in, 2) if s_max_in is not None else None,
+        "joint_shear_ok": joint_shear_ok,
+        "strong_column_ok": strong_column_ok,
+        "spacing_ok": spacing_ok,
+    }

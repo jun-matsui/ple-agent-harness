@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aci_smf_beam_column_joint,
     verify_aisc_reduced_beam_section,
     verify_nec_box_fill,
     verify_aci_anchor_bolt_shear,
@@ -9310,6 +9311,140 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg_shear["pass"])
         self.assertEqual(res_neg_shear["reason"], "negative_gravity_shear")
+
+
+    def test_aci_smf_beam_column_joint(self) -> None:
+        from harness.verifiers import verify_aci_smf_beam_column_joint
+
+        # Standard passing interior 4-sided confined SMF beam-column joint
+        # Col: 24" x 24", Beam: 18" x 24", As_top = 3.0 in2, As_bot = 2.0 in2, fc' = 4000 psi, fy = 60 ksi
+        # Aj = 24 * 24 = 576 sqin; gamma = 20; Vn = 20 * sqrt(4000) * 576 / 1000 = 728.59 kips
+        # phi*Vn = 0.75 * 728.59 = 546.44 kips. T1 = 1.25*60*3.0 = 225 kips, C2 = 1.25*60*2.0 = 150 kips
+        # Vj = 375 - 35 = 340 kips <= 546.44 kips (DCR = 0.6222)
+        # Column-beam ratio = 1200 / 800 = 1.50 >= 1.20 (Pass)
+        res_pass = verify_aci_smf_beam_column_joint(
+            col_width_bc_in=24.0,
+            col_depth_hc_in=24.0,
+            beam_width_bb_in=18.0,
+            beam_depth_hb_in=24.0,
+            as_top_in2=3.0,
+            as_bot_in2=2.0,
+            fc_psi=4000.0,
+            fy_psi=60000.0,
+            joint_confinement_type="four_faces",
+            sum_mnc_kip_ft=1200.0,
+            sum_mnb_kip_ft=800.0,
+            v_col_kips=35.0,
+            transverse_spacing_s_in=4.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["gamma"], 20.0)
+        self.assertEqual(res_pass["bj_eff_in"], 24.0)
+        self.assertEqual(res_pass["aj_sqin"], 576.0)
+        self.assertAlmostEqual(res_pass["v_joint_demand_kips"], 340.0, places=1)
+        self.assertAlmostEqual(res_pass["phi_vn_kips"], 546.44, places=1)
+        self.assertAlmostEqual(res_pass["joint_shear_dcr"], 340.0 / 546.44, places=3)
+        self.assertEqual(res_pass["col_beam_ratio"], 1.50)
+        self.assertEqual(res_pass["s_max_in"], 6.0)
+        self.assertTrue(res_pass["joint_shear_ok"])
+        self.assertTrue(res_pass["strong_column_ok"])
+        self.assertTrue(res_pass["spacing_ok"])
+
+        # Joint shear failure under heavy beam steel demand (As_top=6.0 in2, As_bot=5.0 in2)
+        res_shear_fail = verify_aci_smf_beam_column_joint(
+            col_width_bc_in=24.0,
+            col_depth_hc_in=24.0,
+            beam_width_bb_in=18.0,
+            beam_depth_hb_in=24.0,
+            as_top_in2=6.0,
+            as_bot_in2=5.0,
+            fc_psi=4000.0,
+            joint_confinement_type="four_faces",
+            v_col_kips=35.0,
+        )
+        self.assertFalse(res_shear_fail["pass"])
+        self.assertFalse(res_shear_fail["joint_shear_ok"])
+        self.assertGreater(res_shear_fail["joint_shear_dcr"], 1.0)
+
+        # Weak column failure (sum(Mnc) / sum(Mnb) = 900 / 800 = 1.125 < 1.20)
+        res_weak_col = verify_aci_smf_beam_column_joint(
+            col_width_bc_in=24.0,
+            col_depth_hc_in=24.0,
+            beam_width_bb_in=18.0,
+            beam_depth_hb_in=24.0,
+            as_top_in2=3.0,
+            as_bot_in2=2.0,
+            fc_psi=4000.0,
+            sum_mnc_kip_ft=900.0,
+            sum_mnb_kip_ft=800.0,
+            v_col_kips=35.0,
+        )
+        self.assertFalse(res_weak_col["pass"])
+        self.assertFalse(res_weak_col["strong_column_ok"])
+        self.assertEqual(res_weak_col["col_beam_ratio"], 1.125)
+
+        # Transverse hoop spacing exceeding allowable maximum (s = 8" > s_max = 6")
+        res_spacing_fail = verify_aci_smf_beam_column_joint(
+            col_width_bc_in=24.0,
+            col_depth_hc_in=24.0,
+            beam_width_bb_in=18.0,
+            beam_depth_hb_in=24.0,
+            as_top_in2=3.0,
+            as_bot_in2=2.0,
+            fc_psi=4000.0,
+            v_col_kips=35.0,
+            transverse_spacing_s_in=8.0,
+        )
+        self.assertFalse(res_spacing_fail["pass"])
+        self.assertFalse(res_spacing_fail["spacing_ok"])
+
+        # Geometric violation: beam wider than column
+        res_geom_err = verify_aci_smf_beam_column_joint(
+            col_width_bc_in=18.0,
+            col_depth_hc_in=24.0,
+            beam_width_bb_in=24.0,
+            beam_depth_hb_in=24.0,
+            as_top_in2=3.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_geom_err["pass"])
+        self.assertEqual(res_geom_err["reason"], "beam_width_exceeds_column_width")
+
+        # Invalid confinement type
+        res_conf_err = verify_aci_smf_beam_column_joint(
+            col_width_bc_in=24.0,
+            col_depth_hc_in=24.0,
+            beam_width_bb_in=18.0,
+            beam_depth_hb_in=24.0,
+            as_top_in2=3.0,
+            fc_psi=4000.0,
+            joint_confinement_type="cantilever_joint",
+        )
+        self.assertFalse(res_conf_err["pass"])
+        self.assertEqual(res_conf_err["reason"], "invalid_confinement_type")
+
+        # NaN and negative input validation checks
+        res_nan = verify_aci_smf_beam_column_joint(
+            col_width_bc_in=float("nan"),
+            col_depth_hc_in=24.0,
+            beam_width_bb_in=18.0,
+            beam_depth_hb_in=24.0,
+            as_top_in2=3.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aci_smf_beam_column_joint(
+            col_width_bc_in=-24.0,
+            col_depth_hc_in=24.0,
+            beam_width_bb_in=18.0,
+            beam_depth_hb_in=24.0,
+            as_top_in2=3.0,
+            fc_psi=4000.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_material")
 
 
 if __name__ == "__main__":

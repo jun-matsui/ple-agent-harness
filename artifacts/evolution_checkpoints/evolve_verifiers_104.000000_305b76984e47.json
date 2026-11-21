@@ -1,0 +1,9 @@
+{
+  "score": 104.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aci_smf_beam_column_joint",
+    "rationale": "Implements ACI 318-19 Section 18.7 & 18.8 seismic design checks for Special Moment Frame (SMF) beam-column joints, evaluating strong-column/weak-beam moment ratios, joint horizontal shear demand and capacity, and transverse hoop confinement.",
+    "model": "gemini-3.8-flash"
+  }
+}
