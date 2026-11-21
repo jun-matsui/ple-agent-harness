@@ -1,0 +1,9 @@
+{
+  "score": 109.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_ieee80_substation_grounding",
+    "rationale": "Implements IEEE 80-2013 Section 8 & 14 AC substation ground grid resistance (Sverak's formula), surface layer derating factor, tolerable touch and step voltage limits, Ground Potential Rise (GPR), and mesh voltage safety gates.",
+    "model": "gemini-3.8-flash"
+  }
+}

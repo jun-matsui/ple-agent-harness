@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_ieee80_substation_grounding,
     verify_ieee519_harmonic_distortion,
     verify_aashto_rigid_pavement_slab_thickness,
     verify_fhwa_culvert_outlet_control,
@@ -9810,6 +9811,127 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_current_or_voltage")
+
+
+    def test_ieee80_substation_grounding(self) -> None:
+        from harness.verifiers import verify_ieee80_substation_grounding
+
+        # Standard passing 69 kV substation ground grid with crushed rock surface layer
+        # Area = 40,000 sqft (200x200 ft), L = 3,000 ft, rho = 100 ohm-m, rho_s = 2500 ohm-m, hs = 4 in
+        # Fault = 5.0 kA, ts = 0.5s, Sf = 0.60 -> Ig = 3000 A
+        # Mesh voltage = 650 V <= E_touch = 809.29 V -> Pass
+        res_pass = verify_ieee80_substation_grounding(
+            fault_current_ka=5.0,
+            fault_duration_s=0.5,
+            grid_area_sqft=40000.0,
+            total_conductor_length_ft=3000.0,
+            soil_resistivity_ohm_m=100.0,
+            burial_depth_ft=1.5,
+            surface_layer_resistivity_ohm_m=2500.0,
+            surface_layer_thickness_in=4.0,
+            body_weight_kg=70.0,
+            current_division_factor=0.6,
+            mesh_voltage_v=650.0,
+            step_voltage_v=1500.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["grid_resistance_ohm"], 0.8311, places=3)
+        self.assertAlmostEqual(res_pass["gpr_v"], 2493.2, places=0)
+        self.assertAlmostEqual(res_pass["cs_factor"], 0.7053, places=3)
+        self.assertAlmostEqual(res_pass["e_touch_tolerable_v"], 809.3, places=1)
+        self.assertAlmostEqual(res_pass["e_step_tolerable_v"], 2571.1, places=1)
+        self.assertFalse(res_pass["unconditionally_safe"])
+        self.assertAlmostEqual(res_pass["dcr"], 650.0 / 809.29, places=3)
+        self.assertTrue(res_pass["touch_ok"])
+        self.assertTrue(res_pass["step_ok"])
+
+        # Low fault current where GPR <= E_touch (unconditionally safe without mesh voltage check)
+        res_unconditional = verify_ieee80_substation_grounding(
+            fault_current_ka=0.5,
+            fault_duration_s=0.5,
+            grid_area_sqft=40000.0,
+            total_conductor_length_ft=3000.0,
+            soil_resistivity_ohm_m=100.0,
+            current_division_factor=0.6,
+        )
+        self.assertTrue(res_unconditional["pass"])
+        self.assertTrue(res_unconditional["unconditionally_safe"])
+        self.assertAlmostEqual(res_unconditional["gpr_v"], 249.32, places=1)
+        self.assertLess(res_unconditional["gpr_v"], res_unconditional["e_touch_tolerable_v"])
+
+        # Mesh voltage exceeding tolerable touch voltage failure (Em > E_touch)
+        res_touch_fail = verify_ieee80_substation_grounding(
+            fault_current_ka=5.0,
+            fault_duration_s=0.5,
+            grid_area_sqft=40000.0,
+            total_conductor_length_ft=3000.0,
+            soil_resistivity_ohm_m=100.0,
+            current_division_factor=0.6,
+            mesh_voltage_v=950.0,
+        )
+        self.assertFalse(res_touch_fail["pass"])
+        self.assertFalse(res_touch_fail["touch_ok"])
+        self.assertGreater(res_touch_fail["dcr"], 1.0)
+
+        # Step voltage exceeding tolerable step voltage failure (Es > E_step)
+        res_step_fail = verify_ieee80_substation_grounding(
+            fault_current_ka=5.0,
+            fault_duration_s=0.5,
+            grid_area_sqft=40000.0,
+            total_conductor_length_ft=3000.0,
+            soil_resistivity_ohm_m=100.0,
+            current_division_factor=0.6,
+            mesh_voltage_v=600.0,
+            step_voltage_v=3000.0,
+        )
+        self.assertFalse(res_step_fail["pass"])
+        self.assertFalse(res_step_fail["step_ok"])
+
+        # 50 kg body weight check (stricter constant 0.116 resulting in lower tolerable voltage)
+        res_50kg = verify_ieee80_substation_grounding(
+            fault_current_ka=5.0,
+            fault_duration_s=0.5,
+            grid_area_sqft=40000.0,
+            total_conductor_length_ft=3000.0,
+            soil_resistivity_ohm_m=100.0,
+            body_weight_kg=50.0,
+            mesh_voltage_v=650.0,
+        )
+        self.assertLess(res_50kg["e_touch_tolerable_v"], res_pass["e_touch_tolerable_v"])
+
+        # Input error: Invalid body weight
+        res_weight_err = verify_ieee80_substation_grounding(
+            fault_current_ka=5.0,
+            fault_duration_s=0.5,
+            grid_area_sqft=40000.0,
+            total_conductor_length_ft=3000.0,
+            soil_resistivity_ohm_m=100.0,
+            body_weight_kg=65.0,
+        )
+        self.assertFalse(res_weight_err["pass"])
+        self.assertEqual(res_weight_err["reason"], "invalid_body_weight")
+
+        # Input error: NaN input
+        res_nan = verify_ieee80_substation_grounding(
+            fault_current_ka=float("nan"),
+            fault_duration_s=0.5,
+            grid_area_sqft=40000.0,
+            total_conductor_length_ft=3000.0,
+            soil_resistivity_ohm_m=100.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Input error: Non-positive geometry or fault
+        res_neg = verify_ieee80_substation_grounding(
+            fault_current_ka=-5.0,
+            fault_duration_s=0.5,
+            grid_area_sqft=40000.0,
+            total_conductor_length_ft=3000.0,
+            soil_resistivity_ohm_m=100.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_fault_current_or_duration")
 
 
 if __name__ == "__main__":

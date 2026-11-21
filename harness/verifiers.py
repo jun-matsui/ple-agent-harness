@@ -10472,3 +10472,127 @@ def verify_ieee519_harmonic_distortion(
         "individual_harmonics_ok": individual_harmonics_ok,
         "tdd_ok": tdd_ok,
     }
+
+
+def verify_ieee80_substation_grounding(
+    fault_current_ka: float,
+    fault_duration_s: float,
+    grid_area_sqft: float,
+    total_conductor_length_ft: float,
+    soil_resistivity_ohm_m: float,
+    burial_depth_ft: float = 1.5,
+    surface_layer_resistivity_ohm_m: float = 2500.0,
+    surface_layer_thickness_in: float = 4.0,
+    body_weight_kg: float = 70.0,
+    current_division_factor: float = 1.0,
+    mesh_voltage_v: float = 0.0,
+    step_voltage_v: float = 0.0,
+) -> Dict[str, Any]:
+    """IEEE 80-2013 Section 8 & 14 AC substation ground grid resistance, GPR, tolerable touch/step voltage, and safety gate."""
+    scalars = [
+        fault_current_ka,
+        fault_duration_s,
+        grid_area_sqft,
+        total_conductor_length_ft,
+        soil_resistivity_ohm_m,
+        burial_depth_ft,
+        surface_layer_resistivity_ohm_m,
+        surface_layer_thickness_in,
+        body_weight_kg,
+        current_division_factor,
+        mesh_voltage_v,
+        step_voltage_v,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if fault_current_ka <= 0 or fault_duration_s <= 0:
+        return {"pass": False, "reason": "non_positive_fault_current_or_duration"}
+    if grid_area_sqft <= 0 or total_conductor_length_ft <= 0 or soil_resistivity_ohm_m <= 0:
+        return {"pass": False, "reason": "non_positive_geometry_or_resistivity"}
+    if burial_depth_ft <= 0:
+        return {"pass": False, "reason": "non_positive_burial_depth"}
+    if surface_layer_resistivity_ohm_m < 0 or surface_layer_thickness_in < 0:
+        return {"pass": False, "reason": "negative_surface_layer_parameter"}
+    if mesh_voltage_v < 0 or step_voltage_v < 0:
+        return {"pass": False, "reason": "negative_voltage_input"}
+    if not (0.0 < current_division_factor <= 1.0):
+        return {"pass": False, "reason": "invalid_current_division_factor"}
+    if body_weight_kg not in (50.0, 70.0):
+        return {"pass": False, "reason": "invalid_body_weight"}
+
+    # Convert US customary dimensions to SI (meters & square meters) for IEEE 80 standard formulas
+    area_m2 = grid_area_sqft * 0.09290304
+    length_m = total_conductor_length_ft * 0.3048
+    depth_m = burial_depth_ft * 0.3048
+    hs_m = surface_layer_thickness_in * 0.0254
+
+    # IEEE 80-2013 Eq. 59: Sverak's formula for grounding grid resistance Rg
+    sqrt_20_over_a = math.sqrt(20.0 / area_m2)
+    denom_depth = 1.0 + depth_m * sqrt_20_over_a
+    term_area = (1.0 / math.sqrt(20.0 * area_m2)) * (1.0 + (1.0 / denom_depth))
+    rg_ohms = soil_resistivity_ohm_m * ((1.0 / length_m) + term_area)
+
+    # IEEE 80-2013 Eq. 27: Surface layer derating factor Cs
+    rho = soil_resistivity_ohm_m
+    rho_s = surface_layer_resistivity_ohm_m
+    if hs_m > 0.0 and rho_s > 0.0:
+        cs_calc = 1.0 - (0.09 * (1.0 - (rho / rho_s))) / (2.0 * hs_m + 0.09)
+        cs = max(0.0, min(1.0, cs_calc))
+        effective_rho_s = rho_s
+    else:
+        cs = 1.0
+        effective_rho_s = rho
+
+    # IEEE 80-2013 Section 8.4: Body weight constant (0.157 for 70 kg, 0.116 for 50 kg)
+    k_body = 0.157 if body_weight_kg == 70.0 else 0.116
+    sqrt_ts = math.sqrt(fault_duration_s)
+
+    # Tolerable touch and step voltage limits
+    e_touch_tolerable = (1000.0 + 1.5 * cs * effective_rho_s) * (k_body / sqrt_ts)
+    e_step_tolerable = (1000.0 + 6.0 * cs * effective_rho_s) * (k_body / sqrt_ts)
+
+    # Ground Potential Rise (GPR)
+    i_grid_a = fault_current_ka * 1000.0 * current_division_factor
+    gpr_v = i_grid_a * rg_ohms
+
+    # IEEE 80 Section 14.1 Safety Criteria Evaluation
+    unconditionally_safe = gpr_v <= e_touch_tolerable
+
+    if unconditionally_safe:
+        touch_dcr = gpr_v / e_touch_tolerable if e_touch_tolerable > 0 else float("inf")
+        touch_ok = True
+        step_ok = True
+        step_dcr = None
+    else:
+        if mesh_voltage_v > 0.0:
+            touch_dcr = mesh_voltage_v / e_touch_tolerable if e_touch_tolerable > 0 else float("inf")
+            touch_ok = touch_dcr <= 1.0
+        else:
+            touch_dcr = gpr_v / e_touch_tolerable if e_touch_tolerable > 0 else float("inf")
+            touch_ok = False
+
+        if step_voltage_v > 0.0:
+            step_dcr = step_voltage_v / e_step_tolerable if e_step_tolerable > 0 else float("inf")
+            step_ok = step_dcr <= 1.0
+        else:
+            step_dcr = None
+            step_ok = True
+
+    dcr_candidates = [touch_dcr]
+    if step_dcr is not None:
+        dcr_candidates.append(step_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = touch_ok and step_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "grid_resistance_ohm": round(rg_ohms, 4),
+        "gpr_v": round(gpr_v, 2),
+        "e_touch_tolerable_v": round(e_touch_tolerable, 2),
+        "e_step_tolerable_v": round(e_step_tolerable, 2),
+        "cs_factor": round(cs, 4),
+        "unconditionally_safe": unconditionally_safe,
+        "touch_ok": touch_ok,
+        "step_ok": step_ok,
+    }
