@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aisc_prying_action,
     verify_driven_pile_axial_capacity,
     verify_aashto_elastomeric_bearing,
     verify_ieee80_substation_grounding,
@@ -10189,6 +10190,137 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_soil["pass"])
         self.assertEqual(res_inv_soil["reason"], "invalid_soil_type")
+
+
+    def test_aisc_prying_action(self) -> None:
+        from harness.verifiers import verify_aisc_prying_action
+
+        # Standard passing intermediate prying case
+        # 3/4" A325 bolt (B = 29.82 kips), b=1.75 in, a=1.50 in, p=4.0 in, t=0.625 in, Tu=15.0 kips
+        res_pass = verify_aisc_prying_action(
+            tu_kips=15.0,
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=0.625,
+            bolt_to_face_b_in=1.75,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=4.0,
+            bolt_grade="A325",
+            fy_ksi=50.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["prying_regime"], "intermediate_prying")
+        self.assertAlmostEqual(res_pass["phi_rn_bolt_kips"], 29.82, places=1)
+        self.assertAlmostEqual(res_pass["t_c_in"], 0.954, places=2)
+        self.assertAlmostEqual(res_pass["alpha_prime"], 0.9644, places=2)
+        self.assertAlmostEqual(res_pass["prying_force_q_kips"], 8.45, places=1)
+        self.assertAlmostEqual(res_pass["total_bolt_tension_kips"], 23.45, places=1)
+        self.assertAlmostEqual(res_pass["t_min_in"], 0.509, places=2)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["bolt_ok"])
+        self.assertTrue(res_pass["thickness_ok"])
+
+        # Thick plate where prying action is negligible (alpha_prime <= 0)
+        res_thick = verify_aisc_prying_action(
+            tu_kips=15.0,
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=1.25,
+            bolt_to_face_b_in=1.75,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=4.0,
+        )
+        self.assertTrue(res_thick["pass"])
+        self.assertEqual(res_thick["prying_regime"], "no_prying")
+        self.assertEqual(res_thick["prying_force_q_kips"], 0.0)
+        self.assertEqual(res_thick["total_bolt_tension_kips"], 15.0)
+        self.assertLessEqual(res_thick["alpha_prime"], 0.0)
+
+        # Thin plate with maximum prying action causing thickness and bolt failure
+        res_thin_fail = verify_aisc_prying_action(
+            tu_kips=20.0,
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=0.375,
+            bolt_to_face_b_in=1.75,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=4.0,
+        )
+        self.assertFalse(res_thin_fail["pass"])
+        self.assertEqual(res_thin_fail["prying_regime"], "maximum_prying")
+        self.assertGreater(res_thin_fail["alpha_prime"], 1.0)
+        self.assertGreater(res_thin_fail["thickness_dcr"], 1.0)
+
+        # Bolt tensile capacity exceeded failure
+        res_bolt_fail = verify_aisc_prying_action(
+            tu_kips=35.0,
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=0.875,
+            bolt_to_face_b_in=1.75,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=4.0,
+        )
+        self.assertFalse(res_bolt_fail["pass"])
+        self.assertFalse(res_bolt_fail["bolt_ok"])
+        self.assertGreater(res_bolt_fail["bolt_dcr"], 1.0)
+
+        # Bolt hole centerline too close to web face error (b <= db/2)
+        res_close_err = verify_aisc_prying_action(
+            tu_kips=10.0,
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=0.50,
+            bolt_to_face_b_in=0.30,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=4.0,
+        )
+        self.assertFalse(res_close_err["pass"])
+        self.assertEqual(res_close_err["reason"], "bolt_center_too_close_to_web")
+
+        # Hole diameter exceeds pitch error
+        res_pitch_err = verify_aisc_prying_action(
+            tu_kips=10.0,
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=0.50,
+            bolt_to_face_b_in=1.50,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=0.75,
+        )
+        self.assertFalse(res_pitch_err["pass"])
+        self.assertEqual(res_pitch_err["reason"], "hole_diameter_exceeds_pitch")
+
+        # Invalid bolt grade error
+        res_grade_err = verify_aisc_prying_action(
+            tu_kips=10.0,
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=0.50,
+            bolt_to_face_b_in=1.50,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=4.0,
+            bolt_grade="Grade_5",
+        )
+        self.assertFalse(res_grade_err["pass"])
+        self.assertEqual(res_grade_err["reason"], "invalid_bolt_grade")
+
+        # NaN input validation
+        res_nan = verify_aisc_prying_action(
+            tu_kips=float("nan"),
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=0.50,
+            bolt_to_face_b_in=1.50,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=4.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Negative load validation
+        res_neg = verify_aisc_prying_action(
+            tu_kips=-15.0,
+            bolt_diameter_in=0.75,
+            fitting_thickness_t_in=0.50,
+            bolt_to_face_b_in=1.50,
+            bolt_to_edge_a_in=1.50,
+            pitch_p_in=4.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
 
 
 if __name__ == "__main__":

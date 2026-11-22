@@ -10892,3 +10892,146 @@ def verify_driven_pile_axial_capacity(
         "compression_ok": comp_ok,
         "tension_ok": tens_ok,
     }
+
+
+def verify_aisc_prying_action(
+    tu_kips: float,
+    bolt_diameter_in: float,
+    fitting_thickness_t_in: float,
+    bolt_to_face_b_in: float,
+    bolt_to_edge_a_in: float,
+    pitch_p_in: float,
+    bolt_grade: str = "A325",
+    fy_ksi: float = 50.0,
+    fu_ksi: float = 65.0,
+    phi_rn_bolt_kips: float = 0.0,
+    hole_diameter_in: float = 0.0,
+    phi_flexure: float = 0.90,
+    phi_bolt: float = 0.75,
+) -> Dict[str, Any]:
+    """AISC 360-16 Manual Part 9 prying action in bolted tension connections and minimum fitting thickness gate."""
+    scalars = [
+        tu_kips,
+        bolt_diameter_in,
+        fitting_thickness_t_in,
+        bolt_to_face_b_in,
+        bolt_to_edge_a_in,
+        pitch_p_in,
+        fy_ksi,
+        fu_ksi,
+        phi_rn_bolt_kips,
+        hole_diameter_in,
+        phi_flexure,
+        phi_bolt,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if tu_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(
+            bolt_diameter_in,
+            fitting_thickness_t_in,
+            bolt_to_face_b_in,
+            bolt_to_edge_a_in,
+            pitch_p_in,
+            fy_ksi,
+            fu_ksi,
+            phi_flexure,
+            phi_bolt,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if phi_rn_bolt_kips < 0 or hole_diameter_in < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+
+    # Resolve available bolt design tensile strength B = phi * Rn
+    if phi_rn_bolt_kips > 0.0:
+        b_cap = phi_rn_bolt_kips
+    else:
+        grade_clean = bolt_grade.strip().lower().replace(" ", "_").replace("-", "_")
+        f_nt_map = {
+            "a325": 90.0,
+            "f1852": 90.0,
+            "group_a": 90.0,
+            "a490": 113.0,
+            "f2280": 113.0,
+            "group_b": 113.0,
+        }
+        if grade_clean not in f_nt_map:
+            return {"pass": False, "reason": "invalid_bolt_grade"}
+        ab_sqin = (math.pi * (bolt_diameter_in**2)) / 4.0
+        b_cap = phi_bolt * f_nt_map[grade_clean] * ab_sqin
+
+    dh = hole_diameter_in if hole_diameter_in > 0.0 else (bolt_diameter_in + 0.0625)
+    if dh >= pitch_p_in:
+        return {"pass": False, "reason": "hole_diameter_exceeds_pitch"}
+
+    # AISC Manual Part 9 dimensions b' and a'
+    b_prime = bolt_to_face_b_in - (bolt_diameter_in / 2.0)
+    if b_prime <= 0:
+        return {"pass": False, "reason": "bolt_center_too_close_to_web"}
+
+    # AISC limits a <= 1.25 * b
+    a_eff = min(bolt_to_edge_a_in, 1.25 * bolt_to_face_b_in)
+    a_prime = a_eff + (bolt_diameter_in / 2.0)
+    rho = b_prime / a_prime
+    delta = 1.0 - (dh / pitch_p_in)
+
+    # AISC Part 9 reference thickness tc for available bolt capacity B
+    tc_denom = phi_flexure * fy_ksi * pitch_p_in
+    t_c = math.sqrt((4.0 * b_cap * b_prime) / tc_denom) if tc_denom > 0 else float("inf")
+
+    # Prying parameter alpha_prime
+    denom_alpha = delta * (1.0 + rho)
+    ratio_tc_t = (t_c / fitting_thickness_t_in) ** 2
+    alpha_prime = (ratio_tc_t - 1.0) / denom_alpha if denom_alpha > 0 else 0.0
+
+    if alpha_prime <= 0.0:
+        prying_regime = "no_prying"
+        q = 0.0
+        alpha_eff = 0.0
+        t_total = tu_kips
+    elif alpha_prime <= 1.0:
+        prying_regime = "intermediate_prying"
+        q = tu_kips * delta * alpha_prime * rho
+        alpha_eff = alpha_prime
+        t_total = tu_kips + q
+    else:
+        prying_regime = "maximum_prying"
+        alpha_eff = 1.0
+        q = tu_kips * delta * rho
+        t_total = tu_kips + q
+
+    # Minimum required fitting thickness t_min
+    if tu_kips > 0.0:
+        t_min_num = 4.0 * tu_kips * b_prime
+        t_min_den = phi_flexure * fy_ksi * pitch_p_in * (1.0 + delta * alpha_eff)
+        t_min = math.sqrt(t_min_num / t_min_den) if t_min_den > 0 else float("inf")
+    else:
+        t_min = 0.0
+
+    bolt_dcr = t_total / b_cap if b_cap > 0 else float("inf")
+    thickness_dcr = t_min / fitting_thickness_t_in
+    gov_dcr = max(bolt_dcr, thickness_dcr)
+
+    bolt_ok = bolt_dcr <= 1.0
+    thickness_ok = thickness_dcr <= 1.0
+    passed = bolt_ok and thickness_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "bolt_dcr": round(bolt_dcr, 4),
+        "thickness_dcr": round(thickness_dcr, 4),
+        "total_bolt_tension_kips": round(t_total, 2),
+        "prying_force_q_kips": round(q, 2),
+        "phi_rn_bolt_kips": round(b_cap, 2),
+        "t_min_in": round(t_min, 3),
+        "t_c_in": round(t_c, 3),
+        "alpha_prime": round(alpha_prime, 4),
+        "prying_regime": prying_regime,
+        "bolt_ok": bolt_ok,
+        "thickness_ok": thickness_ok,
+    }

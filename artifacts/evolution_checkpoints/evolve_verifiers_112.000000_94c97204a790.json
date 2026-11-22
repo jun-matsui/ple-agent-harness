@@ -1,0 +1,9 @@
+{
+  "score": 112.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aisc_prying_action",
+    "rationale": "Evaluates AISC 360-16 Steel Construction Manual Part 9 prying action in bolted tension connections (tees, hangers, and clip angles), determining additional prying tension Q, total bolt tensile demand, and minimum fitting flange thickness.",
+    "model": "gemini-3.8-flash"
+  }
+}
