@@ -10719,3 +10719,176 @@ def verify_aashto_elastomeric_bearing(
         "stability_ok": stability_ok,
         "shim_ok": shim_ok,
     }
+
+
+def verify_driven_pile_axial_capacity(
+    pu_compression_kips: float,
+    pile_outer_diameter_in: float,
+    embedment_length_ft: float,
+    soil_type: str = "cohesive",
+    undrained_shear_strength_psf: float = 0.0,
+    soil_friction_angle_deg: float = 0.0,
+    effective_unit_weight_pcf: float = 120.0,
+    water_table_depth_ft: float = 999.0,
+    pile_profile: str = "circular_pipe_closed",
+    pu_tension_kips: float = 0.0,
+    pile_weight_kips: float = 0.0,
+    beta_override: float = 0.0,
+    phi_compression: float = 0.45,
+    phi_tension: float = 0.35,
+) -> Dict[str, Any]:
+    """AASHTO LRFD Bridge Design Specifications Section 10.7 & FHWA GEC 012 static axial pile capacity gate."""
+    scalars = [
+        pu_compression_kips,
+        pile_outer_diameter_in,
+        embedment_length_ft,
+        undrained_shear_strength_psf,
+        soil_friction_angle_deg,
+        effective_unit_weight_pcf,
+        water_table_depth_ft,
+        pu_tension_kips,
+        pile_weight_kips,
+        beta_override,
+        phi_compression,
+        phi_tension,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if pu_compression_kips < 0 or pu_tension_kips < 0 or pile_weight_kips < 0:
+        return {"pass": False, "reason": "negative_load_input"}
+    if (
+        min(
+            pile_outer_diameter_in,
+            embedment_length_ft,
+            effective_unit_weight_pcf,
+            phi_compression,
+            phi_tension,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_resistance_factor"}
+    if water_table_depth_ft < 0 or beta_override < 0:
+        return {"pass": False, "reason": "negative_parameter_input"}
+
+    stype = soil_type.strip().lower().replace(" ", "_").replace("-", "_")
+    if stype not in ("cohesive", "clay", "cohesionless", "sand"):
+        return {"pass": False, "reason": "invalid_soil_type"}
+    is_cohesive = stype in ("cohesive", "clay")
+
+    prof = pile_profile.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_profiles = {"circular_pipe_closed", "circular_pipe_open", "square_concrete", "h_pile"}
+    if prof not in valid_profiles:
+        return {"pass": False, "reason": "invalid_pile_profile"}
+
+    d_ft = pile_outer_diameter_in / 12.0
+    l_ft = embedment_length_ft
+
+    # Cross-sectional shaft perimeter and toe bearing area
+    if prof in ("circular_pipe_closed", "circular_pipe_open"):
+        perimeter_ft = math.pi * d_ft
+        a_base_sqft = (math.pi * (d_ft**2)) / 4.0
+    elif prof == "square_concrete":
+        perimeter_ft = 4.0 * d_ft
+        a_base_sqft = d_ft**2
+    else:  # h_pile box perimeter
+        perimeter_ft = 4.0 * d_ft
+        a_base_sqft = d_ft**2
+
+    a_shaft_sqft = perimeter_ft * l_ft
+
+    if is_cohesive:
+        if undrained_shear_strength_psf <= 0.0:
+            return {"pass": False, "reason": "non_positive_shear_strength"}
+        su = undrained_shear_strength_psf
+        pa = 2116.22  # Reference atmospheric pressure (100 kPa in psf)
+        ratio = su / pa
+
+        # AASHTO Eq. 10.7.3.8.6b-1 Tomlinson alpha adhesion factor
+        if ratio <= 1.0:
+            alpha = 0.5 * (ratio ** -0.5)
+        else:
+            alpha = 0.5 * (ratio ** -0.25)
+        alpha = min(alpha, 1.0)
+
+        # Nominal shaft side resistance
+        qs_psf = alpha * su
+        rs_kips = (qs_psf * a_shaft_sqft) / 1000.0
+
+        # AASHTO Eq. 10.7.3.8.6b-2 end bearing resistance
+        l_over_d = l_ft / d_ft
+        nc = min(6.0 * (1.0 + 0.2 * l_over_d), 9.0)
+        qp_psf = nc * su
+        rp_kips = (qp_psf * a_base_sqft) / 1000.0
+        beta_factor = None
+    else:
+        if not (20.0 <= soil_friction_angle_deg <= 48.0):
+            return {"pass": False, "reason": "invalid_friction_angle"}
+        phi_rad = math.radians(soil_friction_angle_deg)
+
+        # Effective vertical overburden stress at mid-depth and pile tip
+        gamma = effective_unit_weight_pcf
+        gamma_w = 62.4
+        z_mid = l_ft / 2.0
+        if water_table_depth_ft >= z_mid:
+            sigma_v_mid = gamma * z_mid
+        else:
+            gamma_sub = max(gamma - gamma_w, 0.0)
+            sigma_v_mid = gamma * water_table_depth_ft + gamma_sub * (z_mid - water_table_depth_ft)
+
+        if water_table_depth_ft >= l_ft:
+            sigma_v_tip = gamma * l_ft
+        else:
+            gamma_sub = max(gamma - gamma_w, 0.0)
+            sigma_v_tip = gamma * water_table_depth_ft + gamma_sub * (l_ft - water_table_depth_ft)
+
+        # AASHTO Eq. 10.7.3.8.6a-2 Beta method shaft resistance
+        if beta_override > 0.0:
+            beta_factor = beta_override
+        else:
+            k0 = 1.0 - math.sin(phi_rad)
+            delta_rad = math.radians(0.80 * soil_friction_angle_deg)
+            beta_factor = k0 * math.tan(delta_rad)
+
+        qs_psf = min(beta_factor * sigma_v_mid, 4000.0)  # AASHTO unit side friction limit
+        rs_kips = (qs_psf * a_shaft_sqft) / 1000.0
+
+        # Meyerhof / AASHTO unit tip resistance in cohesionless soils
+        nq = math.exp(math.pi * math.tan(phi_rad)) * (math.tan(math.radians(45.0 + soil_friction_angle_deg / 2.0)) ** 2)
+        qp_psf = min(nq * sigma_v_tip, 100000.0)  # AASHTO unit base resistance limit
+        rp_kips = (qp_psf * a_base_sqft) / 1000.0
+        alpha = None
+
+    # Total nominal compressive resistance
+    rn_kips = rs_kips + rp_kips
+    rr_comp_kips = phi_compression * rn_kips
+    comp_dcr = pu_compression_kips / rr_comp_kips if rr_comp_kips > 0 else float("inf")
+    comp_ok = comp_dcr <= 1.0
+
+    # Factored tensile (uplift) resistance
+    if pu_tension_kips > 0.0:
+        rr_tens_kips = (phi_tension * rs_kips) + (0.90 * pile_weight_kips)
+        tens_dcr = pu_tension_kips / rr_tens_kips if rr_tens_kips > 0 else float("inf")
+        tens_ok = tens_dcr <= 1.0
+    else:
+        rr_tens_kips = None
+        tens_dcr = 0.0
+        tens_ok = True
+
+    gov_dcr = max(comp_dcr, tens_dcr)
+    passed = comp_ok and tens_ok
+
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "comp_dcr": round(comp_dcr, 4),
+        "tens_dcr": round(tens_dcr, 4) if pu_tension_kips > 0.0 else None,
+        "rr_compression_kips": round(rr_comp_kips, 2),
+        "rr_tension_kips": round(rr_tens_kips, 2) if rr_tens_kips is not None else None,
+        "rn_nominal_kips": round(rn_kips, 2),
+        "rs_shaft_kips": round(rs_kips, 2),
+        "rp_base_kips": round(rp_kips, 2),
+        "alpha": round(alpha, 4) if alpha is not None else None,
+        "beta": round(beta_factor, 4) if beta_factor is not None else None,
+        "compression_ok": comp_ok,
+        "tension_ok": tens_ok,
+    }

@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_driven_pile_axial_capacity,
     verify_aashto_elastomeric_bearing,
     verify_ieee80_substation_grounding,
     verify_ieee519_harmonic_distortion,
@@ -10067,6 +10068,127 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_inv_type["pass"])
         self.assertEqual(res_inv_type["reason"], "invalid_bearing_type")
+
+
+    def test_driven_pile_axial_capacity(self) -> None:
+        from harness.verifiers import verify_driven_pile_axial_capacity
+
+        # Passing 16-inch closed-ended pipe pile in stiff clay (Tomlinson alpha method)
+        # D = 1.333 ft, L = 50 ft, Su = 1500 psf -> ratio = 1500/2116.22 = 0.7088
+        # alpha = 0.5 / sqrt(0.7088) = 0.5939, qs = 890.8 psf, Rs = 186.58 kips
+        # Rp = 9.0 * 1500 * 1.3963 / 1000 = 18.85 kips -> Rn = 205.43 kips
+        # Rr_comp = 0.45 * 205.43 = 92.44 kips. Pu = 80.0 kips -> DCR = 0.8654 <= 1.0
+        res_pass_clay = verify_driven_pile_axial_capacity(
+            pu_compression_kips=80.0,
+            pile_outer_diameter_in=16.0,
+            embedment_length_ft=50.0,
+            soil_type="cohesive",
+            undrained_shear_strength_psf=1500.0,
+            pile_profile="circular_pipe_closed",
+            pu_tension_kips=45.0,
+            pile_weight_kips=6.0,
+        )
+        self.assertTrue(res_pass_clay["pass"])
+        self.assertAlmostEqual(res_pass_clay["alpha"], 0.5939, places=3)
+        self.assertAlmostEqual(res_pass_clay["rs_shaft_kips"], 186.58, places=1)
+        self.assertAlmostEqual(res_pass_clay["rp_base_kips"], 18.85, places=1)
+        self.assertAlmostEqual(res_pass_clay["rr_compression_kips"], 92.44, places=1)
+        self.assertAlmostEqual(res_pass_clay["comp_dcr"], 80.0 / 92.44, places=3)
+        self.assertLess(res_pass_clay["dcr"], 1.0)
+        self.assertTrue(res_pass_clay["compression_ok"])
+        self.assertTrue(res_pass_clay["tension_ok"])
+
+        # Passing 14-inch square concrete pile in medium dense sand (Beta method)
+        res_pass_sand = verify_driven_pile_axial_capacity(
+            pu_compression_kips=85.0,
+            pile_outer_diameter_in=14.0,
+            embedment_length_ft=40.0,
+            soil_type="cohesionless",
+            soil_friction_angle_deg=32.0,
+            effective_unit_weight_pcf=120.0,
+            water_table_depth_ft=20.0,
+            pile_profile="square_concrete",
+        )
+        self.assertTrue(res_pass_sand["pass"])
+        self.assertIsNotNone(res_pass_sand["beta"])
+        self.assertGreater(res_pass_sand["rr_compression_kips"], 85.0)
+        self.assertLess(res_pass_sand["comp_dcr"], 1.0)
+
+        # Compressive load exceeding factored resistance failure
+        res_fail_comp = verify_driven_pile_axial_capacity(
+            pu_compression_kips=120.0,
+            pile_outer_diameter_in=16.0,
+            embedment_length_ft=50.0,
+            soil_type="cohesive",
+            undrained_shear_strength_psf=1500.0,
+        )
+        self.assertFalse(res_fail_comp["pass"])
+        self.assertFalse(res_fail_comp["compression_ok"])
+        self.assertGreater(res_fail_comp["comp_dcr"], 1.0)
+
+        # Tension / uplift load exceeding resistance failure
+        res_fail_tens = verify_driven_pile_axial_capacity(
+            pu_compression_kips=50.0,
+            pile_outer_diameter_in=16.0,
+            embedment_length_ft=50.0,
+            soil_type="cohesive",
+            undrained_shear_strength_psf=1500.0,
+            pu_tension_kips=80.0,
+            pile_weight_kips=5.0,
+        )
+        self.assertFalse(res_fail_tens["pass"])
+        self.assertFalse(res_fail_tens["tension_ok"])
+        self.assertGreater(res_fail_tens["tens_dcr"], 1.0)
+
+        # Non-positive shear strength error in cohesive soil
+        res_su_err = verify_driven_pile_axial_capacity(
+            pu_compression_kips=50.0,
+            pile_outer_diameter_in=16.0,
+            embedment_length_ft=50.0,
+            soil_type="cohesive",
+            undrained_shear_strength_psf=0.0,
+        )
+        self.assertFalse(res_su_err["pass"])
+        self.assertEqual(res_su_err["reason"], "non_positive_shear_strength")
+
+        # Friction angle out of bounds error in cohesionless soil
+        res_phi_err = verify_driven_pile_axial_capacity(
+            pu_compression_kips=50.0,
+            pile_outer_diameter_in=16.0,
+            embedment_length_ft=50.0,
+            soil_type="cohesionless",
+            soil_friction_angle_deg=55.0,
+        )
+        self.assertFalse(res_phi_err["pass"])
+        self.assertEqual(res_phi_err["reason"], "invalid_friction_angle")
+
+        # Input error validation checks
+        res_nan = verify_driven_pile_axial_capacity(
+            pu_compression_kips=float("nan"),
+            pile_outer_diameter_in=16.0,
+            embedment_length_ft=50.0,
+            undrained_shear_strength_psf=1500.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_driven_pile_axial_capacity(
+            pu_compression_kips=-50.0,
+            pile_outer_diameter_in=16.0,
+            embedment_length_ft=50.0,
+            undrained_shear_strength_psf=1500.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_load_input")
+
+        res_inv_soil = verify_driven_pile_axial_capacity(
+            pu_compression_kips=50.0,
+            pile_outer_diameter_in=16.0,
+            embedment_length_ft=50.0,
+            soil_type="peat_bog",
+        )
+        self.assertFalse(res_inv_soil["pass"])
+        self.assertEqual(res_inv_soil["reason"], "invalid_soil_type")
 
 
 if __name__ == "__main__":

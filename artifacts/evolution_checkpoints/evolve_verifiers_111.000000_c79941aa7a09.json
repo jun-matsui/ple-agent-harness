@@ -1,0 +1,9 @@
+{
+  "score": 111.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_driven_pile_axial_capacity",
+    "rationale": "Implements AASHTO LRFD Section 10.7 and FHWA GEC 012 static axial compressive and uplift resistance checks for single driven piles in cohesive (Tomlinson alpha) and cohesionless (beta) soils. This closes a critical PLE Geotechnical and Structural exam gap covering deep foundation side friction, tip resistance, and resistance factor limits.",
+    "model": "gemini-3.8-flash"
+  }
+}
