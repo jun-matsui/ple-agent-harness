@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_aashto_elastomeric_bearing,
     verify_ieee80_substation_grounding,
     verify_ieee519_harmonic_distortion,
     verify_aashto_rigid_pavement_slab_thickness,
@@ -9932,6 +9933,140 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_fault_current_or_duration")
+
+
+    def test_aashto_elastomeric_bearing(self) -> None:
+        from harness.verifiers import verify_aashto_elastomeric_bearing
+
+        # Standard passing steel-reinforced elastomeric bearing pad
+        # L = 14 in, W = 16 in, 3 internal layers @ 0.5 in, 2 cover layers @ 0.25 in -> hrt = 2.0 in
+        # Area = 224 sqin, S = (14*16) / (2 * 0.5 * 30) = 7.467
+        # G = 130 psi -> 1.66 * G * S = 1611.3 psi -> sigma_allow = 1250 psi
+        # P_dead = 100 kips, P_live = 80 kips -> P_total = 180 kips -> sigma = 803.6 psi <= 1250 psi
+        # Delta_s = 0.60 in <= 0.50 * 2.0 = 1.0 in; hrt = 2.0 in <= 14/3 = 4.67 in
+        res_pass = verify_aashto_elastomeric_bearing(
+            length_in=14.0,
+            width_in=16.0,
+            layer_thickness_in=0.50,
+            num_internal_layers=3,
+            p_dead_kips=100.0,
+            p_live_kips=80.0,
+            shear_displacement_in=0.60,
+            bearing_type="steel_reinforced",
+            shear_modulus_psi=130.0,
+            cover_thickness_in=0.25,
+            num_cover_layers=2,
+            steel_shim_thickness_in=0.1046,
+            fy_ksi=36.0,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["shape_factor"], 7.467, places=2)
+        self.assertAlmostEqual(res_pass["total_elastomer_thickness_in"], 2.0, places=2)
+        self.assertAlmostEqual(res_pass["sigma_total_psi"], 803.57, places=1)
+        self.assertEqual(res_pass["sigma_allow_total_psi"], 1250.0)
+        self.assertEqual(res_pass["allowable_shear_disp_in"], 1.0)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["stress_ok"])
+        self.assertTrue(res_pass["shear_ok"])
+        self.assertTrue(res_pass["stability_ok"])
+        self.assertTrue(res_pass["shim_ok"])
+
+        # Plain elastomeric pad (PEP) passing lower stress limit (0.55 * G * S)
+        res_pep = verify_aashto_elastomeric_bearing(
+            length_in=12.0,
+            width_in=12.0,
+            layer_thickness_in=0.50,
+            num_internal_layers=1,
+            p_dead_kips=30.0,
+            p_live_kips=20.0,
+            shear_displacement_in=0.20,
+            bearing_type="plain_pad",
+            shear_modulus_psi=130.0,
+        )
+        self.assertTrue(res_pep["pass"])
+        self.assertEqual(res_pep["shape_factor"], 6.0)
+        self.assertAlmostEqual(res_pep["sigma_allow_total_psi"], 0.55 * 130.0 * 6.0, places=1)
+        self.assertLess(res_pep["dcr"], 1.0)
+
+        # Excessive shear displacement failure (Delta_s > 0.5 * hrt)
+        res_shear_fail = verify_aashto_elastomeric_bearing(
+            length_in=14.0,
+            width_in=16.0,
+            layer_thickness_in=0.50,
+            num_internal_layers=3,
+            p_dead_kips=100.0,
+            p_live_kips=80.0,
+            shear_displacement_in=1.25,
+        )
+        self.assertFalse(res_shear_fail["pass"])
+        self.assertFalse(res_shear_fail["shear_ok"])
+        self.assertGreater(res_shear_fail["shear_dcr"], 1.0)
+
+        # Stability / slenderness failure (hrt > min(L, W) / 3)
+        res_stab_fail = verify_aashto_elastomeric_bearing(
+            length_in=9.0,
+            width_in=12.0,
+            layer_thickness_in=0.50,
+            num_internal_layers=8,
+            p_dead_kips=40.0,
+            p_live_kips=20.0,
+            shear_displacement_in=0.50,
+        )
+        self.assertFalse(res_stab_fail["pass"])
+        self.assertFalse(res_stab_fail["stability_ok"])
+        self.assertGreater(res_stab_fail["stability_dcr"], 1.0)
+
+        # Compressive overstress failure under heavy total load
+        res_overstress = verify_aashto_elastomeric_bearing(
+            length_in=12.0,
+            width_in=12.0,
+            layer_thickness_in=0.50,
+            num_internal_layers=2,
+            p_dead_kips=150.0,
+            p_live_kips=100.0,
+            shear_displacement_in=0.30,
+        )
+        self.assertFalse(res_overstress["pass"])
+        self.assertFalse(res_overstress["stress_ok"])
+        self.assertGreater(res_overstress["stress_dcr"], 1.0)
+
+        # Input error validation checks
+        res_nan = verify_aashto_elastomeric_bearing(
+            length_in=float("nan"),
+            width_in=16.0,
+            layer_thickness_in=0.50,
+            num_internal_layers=3,
+            p_dead_kips=50.0,
+            p_live_kips=50.0,
+            shear_displacement_in=0.50,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        res_neg = verify_aashto_elastomeric_bearing(
+            length_in=-14.0,
+            width_in=16.0,
+            layer_thickness_in=0.50,
+            num_internal_layers=3,
+            p_dead_kips=50.0,
+            p_live_kips=50.0,
+            shear_displacement_in=0.50,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_geometry_or_material")
+
+        res_inv_type = verify_aashto_elastomeric_bearing(
+            length_in=14.0,
+            width_in=16.0,
+            layer_thickness_in=0.50,
+            num_internal_layers=3,
+            p_dead_kips=50.0,
+            p_live_kips=50.0,
+            shear_displacement_in=0.50,
+            bearing_type="spherical_pot_bearing",
+        )
+        self.assertFalse(res_inv_type["pass"])
+        self.assertEqual(res_inv_type["reason"], "invalid_bearing_type")
 
 
 if __name__ == "__main__":

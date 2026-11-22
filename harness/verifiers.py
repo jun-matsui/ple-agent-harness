@@ -10596,3 +10596,126 @@ def verify_ieee80_substation_grounding(
         "touch_ok": touch_ok,
         "step_ok": step_ok,
     }
+
+
+def verify_aashto_elastomeric_bearing(
+    length_in: float,
+    width_in: float,
+    layer_thickness_in: float,
+    num_internal_layers: int,
+    p_dead_kips: float,
+    p_live_kips: float,
+    shear_displacement_in: float,
+    bearing_type: str = "steel_reinforced",
+    shear_modulus_psi: float = 130.0,
+    cover_thickness_in: float = 0.0,
+    num_cover_layers: int = 0,
+    steel_shim_thickness_in: float = 0.0,
+    fy_ksi: float = 36.0,
+) -> Dict[str, Any]:
+    """AASHTO LRFD Bridge Design Specifications Section 14.7.6 (Method A) elastomeric bearing gate."""
+    scalars = [
+        length_in,
+        width_in,
+        layer_thickness_in,
+        float(num_internal_layers),
+        p_dead_kips,
+        p_live_kips,
+        shear_displacement_in,
+        shear_modulus_psi,
+        cover_thickness_in,
+        float(num_cover_layers),
+        steel_shim_thickness_in,
+        fy_ksi,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if (
+        min(length_in, width_in, layer_thickness_in, shear_modulus_psi, fy_ksi) <= 0
+        or num_internal_layers < 1
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_material"}
+    if p_dead_kips < 0 or p_live_kips < 0 or shear_displacement_in < 0:
+        return {"pass": False, "reason": "negative_load_or_displacement"}
+    if cover_thickness_in < 0 or num_cover_layers < 0 or steel_shim_thickness_in < 0:
+        return {"pass": False, "reason": "negative_layer_parameter"}
+    if (p_dead_kips + p_live_kips) <= 0:
+        return {"pass": False, "reason": "zero_total_load"}
+
+    b_type = bearing_type.strip().lower().replace(" ", "_").replace("-", "_")
+    valid_types = {"steel_reinforced", "plain_pad", "plain", "pep"}
+    if b_type not in valid_types:
+        return {"pass": False, "reason": "invalid_bearing_type"}
+    is_steel_reinforced = b_type == "steel_reinforced"
+
+    # Plan dimensions and total elastomer thickness (hrt)
+    area_sqin = length_in * width_in
+    h_rt_in = (num_internal_layers * layer_thickness_in) + (num_cover_layers * cover_thickness_in)
+    if h_rt_in <= 0:
+        return {"pass": False, "reason": "zero_elastomer_thickness"}
+
+    # AASHTO Eq. 14.7.5.1-1 Shape Factor S of the thickest internal layer
+    shape_factor = (length_in * width_in) / (2.0 * layer_thickness_in * (length_in + width_in))
+
+    # Service compressive stresses (psi)
+    sigma_dead_psi = (p_dead_kips * 1000.0) / area_sqin
+    sigma_total_psi = ((p_dead_kips + p_live_kips) * 1000.0) / area_sqin
+
+    # AASHTO Section 14.7.6.3.2 Compressive stress limits
+    if is_steel_reinforced:
+        sigma_allow_total_psi = min(1250.0, 1.66 * shear_modulus_psi * shape_factor)
+        dead_stress_ok = sigma_dead_psi <= 1000.0
+    else:
+        sigma_allow_total_psi = min(800.0, 0.55 * shear_modulus_psi * shape_factor)
+        dead_stress_ok = True
+
+    stress_total_ok = sigma_total_psi <= sigma_allow_total_psi
+    stress_dcr = sigma_total_psi / sigma_allow_total_psi if sigma_allow_total_psi > 0 else float("inf")
+
+    # AASHTO Section 14.7.6.3.4 Horizontal shear deformation limit: Delta_s <= 0.50 * hrt
+    delta_allow_in = 0.50 * h_rt_in
+    shear_dcr = shear_displacement_in / delta_allow_in if delta_allow_in > 0 else float("inf")
+    shear_ok = shear_dcr <= 1.0
+
+    # AASHTO Section 14.7.6.3.6 Stability limit: total elastomer thickness <= min(L, W) / 3
+    max_thickness_in = min(length_in, width_in) / 3.0
+    stability_dcr = h_rt_in / max_thickness_in if max_thickness_in > 0 else float("inf")
+    stability_ok = stability_dcr <= 1.0
+
+    # AASHTO Section 14.7.6.3.7 Steel reinforcement shim thickness check
+    shim_ok = True
+    shim_dcr = None
+    hs_req_in = None
+    if is_steel_reinforced and steel_shim_thickness_in > 0.0:
+        fy_psi = fy_ksi * 1000.0
+        hs_req_in = (3.0 * layer_thickness_in * sigma_total_psi) / fy_psi
+        shim_dcr = hs_req_in / steel_shim_thickness_in
+        shim_ok = shim_dcr <= 1.0
+
+    dcr_candidates = [stress_dcr, shear_dcr, stability_dcr]
+    if is_steel_reinforced:
+        dcr_candidates.append(sigma_dead_psi / 1000.0)
+    if shim_dcr is not None:
+        dcr_candidates.append(shim_dcr)
+    gov_dcr = max(dcr_candidates)
+
+    passed = stress_total_ok and dead_stress_ok and shear_ok and stability_ok and shim_ok
+    return {
+        "pass": passed,
+        "dcr": round(gov_dcr, 4),
+        "stress_dcr": round(stress_dcr, 4),
+        "shear_dcr": round(shear_dcr, 4),
+        "stability_dcr": round(stability_dcr, 4),
+        "shape_factor": round(shape_factor, 3),
+        "sigma_total_psi": round(sigma_total_psi, 1),
+        "sigma_allow_total_psi": round(sigma_allow_total_psi, 1),
+        "total_elastomer_thickness_in": round(h_rt_in, 3),
+        "allowable_shear_disp_in": round(delta_allow_in, 3),
+        "max_allowable_thickness_in": round(max_thickness_in, 3),
+        "hs_req_in": round(hs_req_in, 4) if hs_req_in is not None else None,
+        "bearing_type": "steel_reinforced" if is_steel_reinforced else "plain_pad",
+        "stress_ok": stress_total_ok and dead_stress_ok,
+        "shear_ok": shear_ok,
+        "stability_ok": stability_ok,
+        "shim_ok": shim_ok,
+    }

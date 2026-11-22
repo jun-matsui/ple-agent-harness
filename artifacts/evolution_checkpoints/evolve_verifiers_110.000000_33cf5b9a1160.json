@@ -1,0 +1,9 @@
+{
+  "score": 110.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_aashto_elastomeric_bearing",
+    "rationale": "Evaluates AASHTO LRFD Bridge Design Specifications (Section 14.7.6 / Method A) elastomeric bridge bearing pads for compressive stress, shape factor limits, horizontal shear deformation, component stability, and internal steel shim reinforcement thickness.",
+    "model": "gemini-3.8-flash"
+  }
+}
