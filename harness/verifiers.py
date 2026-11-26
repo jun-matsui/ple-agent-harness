@@ -11164,3 +11164,120 @@ def verify_nceer_soil_liquefaction(
         "k_sigma": round(k_sigma, 4),
         "liquefaction_susceptible": susceptible,
     }
+
+
+def verify_hec18_bridge_pier_scour(
+    flow_velocity_fps: float,
+    flow_depth_ft: float,
+    pier_width_ft: float,
+    pier_length_ft: float = 0.0,
+    max_allowable_scour_ft: float = 10.0,
+    pier_nose_shape: str = "round",
+    attack_angle_deg: float = 0.0,
+    bed_condition: str = "plane_bed",
+    k4_armoring_factor: float = 1.0,
+    g_fps2: float = 32.174,
+) -> Dict[str, Any]:
+    """FHWA HDS-7 / HEC-18 (5th Edition) Colorado State University (CSU) bridge pier local scour depth gate."""
+    scalars = [
+        flow_velocity_fps,
+        flow_depth_ft,
+        pier_width_ft,
+        pier_length_ft,
+        max_allowable_scour_ft,
+        attack_angle_deg,
+        k4_armoring_factor,
+        g_fps2,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if flow_velocity_fps < 0:
+        return {"pass": False, "reason": "negative_flow_velocity"}
+    if (
+        min(
+            flow_depth_ft,
+            pier_width_ft,
+            max_allowable_scour_ft,
+            k4_armoring_factor,
+            g_fps2,
+        )
+        <= 0
+    ):
+        return {"pass": False, "reason": "non_positive_geometry_or_flow"}
+    if pier_length_ft < 0:
+        return {"pass": False, "reason": "negative_pier_length"}
+    if not (0.0 <= attack_angle_deg <= 90.0):
+        return {"pass": False, "reason": "invalid_attack_angle"}
+    if attack_angle_deg > 0.0 and pier_length_ft <= 0.0:
+        return {"pass": False, "reason": "skewed_pier_requires_length"}
+
+    # FHWA HEC-18 Table 6.1 Pier nose shape factor K1
+    shape_clean = pier_nose_shape.strip().lower().replace(" ", "_").replace("-", "_")
+    k1_table: Dict[str, float] = {
+        "square": 1.1,
+        "square_nose": 1.1,
+        "round": 1.0,
+        "round_nose": 1.0,
+        "circular": 1.0,
+        "sharp": 0.9,
+        "sharp_nose": 0.9,
+        "group_of_cylinders": 1.0,
+        "cylinders": 1.0,
+    }
+    if shape_clean not in k1_table:
+        return {"pass": False, "reason": "invalid_pier_nose_shape"}
+    k1 = k1_table[shape_clean]
+
+    # FHWA HEC-18 Table 6.2 & Eq. 6.2 Angle of attack factor K2
+    if attack_angle_deg == 0.0 or pier_length_ft <= pier_width_ft:
+        k2 = 1.0
+    else:
+        theta_rad = math.radians(attack_angle_deg)
+        l_over_a = pier_length_ft / pier_width_ft
+        k2_calc = (math.cos(theta_rad) + l_over_a * math.sin(theta_rad)) ** 0.65
+        k2 = min(k2_calc, 5.0)  # HEC-18 Table 6.2 upper limit cap
+
+    # FHWA HEC-18 Table 6.3 Bed condition factor K3
+    bed_clean = bed_condition.strip().lower().replace(" ", "_").replace("-", "_")
+    k3_table: Dict[str, float] = {
+        "clear_water": 1.1,
+        "plane_bed": 1.1,
+        "plane": 1.1,
+        "small_dunes": 1.1,
+        "medium_dunes": 1.2,
+        "large_dunes": 1.3,
+    }
+    if bed_clean not in k3_table:
+        return {"pass": False, "reason": "invalid_bed_condition"}
+    k3 = k3_table[bed_clean]
+
+    # Upstream Froude number Fr1 = V1 / sqrt(g * y1)
+    fr1 = flow_velocity_fps / math.sqrt(g_fps2 * flow_depth_ft)
+
+    # FHWA HEC-18 Eq. 6.1 CSU equation for pier scour depth: ys / y1
+    # ys / y1 = 2.0 * K1 * K2 * K3 * K4 * (a / y1)^0.65 * Fr1^0.43
+    a_over_y1 = pier_width_ft / flow_depth_ft
+    ys_ratio = 2.0 * k1 * k2 * k3 * k4_armoring_factor * (a_over_y1**0.65) * (fr1**0.43)
+    ys_calc = flow_depth_ft * ys_ratio
+
+    # FHWA HEC-18 Section 6.2.2 Pier scour depth maximum threshold
+    # For round nose piers: ys <= 2.4 * a for Fr1 <= 0.8; ys <= 3.0 * a for Fr1 > 0.8
+    ys_max = (2.4 * pier_width_ft) if fr1 <= 0.8 else (3.0 * pier_width_ft)
+    ys_gov = min(ys_calc, ys_max)
+
+    dcr = ys_gov / max_allowable_scour_ft if max_allowable_scour_ft > 0 else float("inf")
+    passed = dcr <= 1.0
+    gov_limit = "scour_equation" if ys_calc <= ys_max else "max_depth_cap"
+
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "scour_depth_ft": round(ys_gov, 2),
+        "scour_unclamped_ft": round(ys_calc, 2),
+        "scour_max_limit_ft": round(ys_max, 2),
+        "froude_number": round(fr1, 3),
+        "k1": round(k1, 2),
+        "k2": round(k2, 3),
+        "k3": round(k3, 2),
+        "governing_limit": gov_limit,
+    }

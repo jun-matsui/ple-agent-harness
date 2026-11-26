@@ -1,0 +1,9 @@
+{
+  "score": 114.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_hec18_bridge_pier_scour",
+    "rationale": "Implements the FHWA HEC-18 / AASHTO bridge hydraulic specification for local bridge pier scour depth, bed conditions, angle of attack, and structural foundation scour tolerance.",
+    "model": "gemini-3.8-flash"
+  }
+}

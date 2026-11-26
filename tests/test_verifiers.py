@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_hec18_bridge_pier_scour,
     verify_nceer_soil_liquefaction,
     verify_aisc_prying_action,
     verify_driven_pile_axial_capacity,
@@ -10423,6 +10424,103 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "non_positive_pga")
+
+
+    def test_hec18_bridge_pier_scour(self) -> None:
+        from harness.verifiers import verify_hec18_bridge_pier_scour
+
+        # Standard passing highway bridge pier under subcritical 100-year flood flow
+        # V = 8.0 fps, y1 = 10.0 ft, a = 4.0 ft, round nose, plane bed, max allowable = 10.0 ft
+        res_pass = verify_hec18_bridge_pier_scour(
+            flow_velocity_fps=8.0,
+            flow_depth_ft=10.0,
+            pier_width_ft=4.0,
+            max_allowable_scour_ft=10.0,
+            pier_nose_shape="round",
+            bed_condition="plane_bed",
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertEqual(res_pass["k1"], 1.0)
+        self.assertEqual(res_pass["k2"], 1.0)
+        self.assertEqual(res_pass["k3"], 1.1)
+        self.assertAlmostEqual(res_pass["froude_number"], 0.446, places=2)
+        self.assertAlmostEqual(res_pass["scour_depth_ft"], 8.57, places=1)
+        self.assertAlmostEqual(res_pass["dcr"], 0.857, places=2)
+        self.assertEqual(res_pass["governing_limit"], "scour_equation")
+
+        # Skewed pier condition increasing scour depth via K2 factor
+        res_skew = verify_hec18_bridge_pier_scour(
+            flow_velocity_fps=8.0,
+            flow_depth_ft=10.0,
+            pier_width_ft=4.0,
+            pier_length_ft=24.0,
+            attack_angle_deg=15.0,
+            max_allowable_scour_ft=20.0,
+        )
+        self.assertTrue(res_skew["pass"])
+        self.assertGreater(res_skew["k2"], 1.5)
+        self.assertGreater(res_skew["scour_depth_ft"], res_pass["scour_depth_ft"])
+
+        # Scour exceeding maximum allowable depth failure (DCR > 1.0)
+        res_fail_scour = verify_hec18_bridge_pier_scour(
+            flow_velocity_fps=8.0,
+            flow_depth_ft=10.0,
+            pier_width_ft=4.0,
+            max_allowable_scour_ft=7.0,
+        )
+        self.assertFalse(res_fail_scour["pass"])
+        self.assertGreater(res_fail_scour["dcr"], 1.0)
+
+        # High velocity flow engaging maximum scour depth clamp (ys = 2.4 * a)
+        res_clamped = verify_hec18_bridge_pier_scour(
+            flow_velocity_fps=12.0,
+            flow_depth_ft=8.0,
+            pier_width_ft=3.0,
+            pier_length_ft=20.0,
+            attack_angle_deg=20.0,
+            max_allowable_scour_ft=10.0,
+        )
+        self.assertEqual(res_clamped["governing_limit"], "max_depth_cap")
+        self.assertAlmostEqual(res_clamped["scour_depth_ft"], res_clamped["scour_max_limit_ft"], places=1)
+
+        # Skewed pier without length error
+        res_skew_err = verify_hec18_bridge_pier_scour(
+            flow_velocity_fps=8.0,
+            flow_depth_ft=10.0,
+            pier_width_ft=4.0,
+            pier_length_ft=0.0,
+            attack_angle_deg=15.0,
+        )
+        self.assertFalse(res_skew_err["pass"])
+        self.assertEqual(res_skew_err["reason"], "skewed_pier_requires_length")
+
+        # Invalid nose shape error
+        res_shape_err = verify_hec18_bridge_pier_scour(
+            flow_velocity_fps=8.0,
+            flow_depth_ft=10.0,
+            pier_width_ft=4.0,
+            pier_nose_shape="elliptical_ogive",
+        )
+        self.assertFalse(res_shape_err["pass"])
+        self.assertEqual(res_shape_err["reason"], "invalid_pier_nose_shape")
+
+        # NaN input validation
+        res_nan = verify_hec18_bridge_pier_scour(
+            flow_velocity_fps=float("nan"),
+            flow_depth_ft=10.0,
+            pier_width_ft=4.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Negative flow velocity validation
+        res_neg = verify_hec18_bridge_pier_scour(
+            flow_velocity_fps=-8.0,
+            flow_depth_ft=10.0,
+            pier_width_ft=4.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "negative_flow_velocity")
 
 
 if __name__ == "__main__":
