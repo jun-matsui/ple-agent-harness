@@ -11035,3 +11035,132 @@ def verify_aisc_prying_action(
         "bolt_ok": bolt_ok,
         "thickness_ok": thickness_ok,
     }
+
+
+def verify_nceer_soil_liquefaction(
+    earthquake_magnitude_mw: float,
+    pga_g: float,
+    depth_z_ft: float,
+    total_stress_psf: float,
+    effective_stress_psf: float,
+    spt_n60: float,
+    fines_content_pct: float = 0.0,
+    min_fs: float = 1.20,
+    k_sigma_override: float = 0.0,
+) -> Dict[str, Any]:
+    """NCEER / Youd et al. (2001) simplified procedure for soil liquefaction triggering safety factor check."""
+    scalars = [
+        earthquake_magnitude_mw,
+        pga_g,
+        depth_z_ft,
+        total_stress_psf,
+        effective_stress_psf,
+        spt_n60,
+        fines_content_pct,
+        min_fs,
+        k_sigma_override,
+    ]
+    if any(math.isnan(val) for val in scalars):
+        return {"pass": False, "reason": "nan_input"}
+    if earthquake_magnitude_mw <= 0:
+        return {"pass": False, "reason": "non_positive_magnitude"}
+    if pga_g <= 0:
+        return {"pass": False, "reason": "non_positive_pga"}
+    if depth_z_ft <= 0:
+        return {"pass": False, "reason": "non_positive_depth"}
+    if total_stress_psf <= 0 or effective_stress_psf <= 0:
+        return {"pass": False, "reason": "non_positive_stress"}
+    if effective_stress_psf > total_stress_psf:
+        return {"pass": False, "reason": "effective_stress_exceeds_total_stress"}
+    if spt_n60 < 0:
+        return {"pass": False, "reason": "negative_spt"}
+    if not (0.0 <= fines_content_pct <= 100.0):
+        return {"pass": False, "reason": "invalid_fines_content"}
+    if min_fs <= 0:
+        return {"pass": False, "reason": "non_positive_min_fs"}
+    if k_sigma_override < 0:
+        return {"pass": False, "reason": "negative_k_sigma"}
+
+    # 1. Depth stress reduction factor r_d (Youd et al. 2001 Eq. 2 & 3)
+    z_m = depth_z_ft * 0.3048
+    if z_m <= 9.15:
+        rd = 1.0 - 0.00765 * z_m
+    elif z_m <= 23.0:
+        rd = 1.174 - 0.0267 * z_m
+    elif z_m <= 30.0:
+        rd = 0.744 - 0.008 * z_m
+    else:
+        rd = 0.50
+
+    # 2. Cyclic Stress Ratio (CSR)
+    csr = 0.65 * pga_g * (total_stress_psf / effective_stress_psf) * rd
+
+    # 3. Overburden normalization factor C_N (Liao and Whitman 1986, capped at 1.7)
+    pa_psf = 2116.22  # Reference atmospheric pressure (100 kPa in psf)
+    cn = min(math.sqrt(pa_psf / effective_stress_psf), 1.7)
+    n1_60 = cn * spt_n60
+
+    # 4. Fines content correction to clean-sand equivalent (N1)60cs (Youd et al. 2001)
+    fc = fines_content_pct
+    if fc <= 5.0:
+        alpha = 0.0
+        beta = 1.0
+    elif fc < 35.0:
+        alpha = math.exp(1.76 - (190.0 / (fc**2)))
+        beta = 0.99 + (fc**1.5) / 1000.0
+    else:
+        alpha = 5.0
+        beta = 1.20
+
+    n1_60cs = alpha + beta * n1_60
+
+    # 5. Baseline Cyclic Resistance Ratio for Mw = 7.5 (CRR_7.5)
+    if n1_60cs >= 30.0:
+        crr_75 = float("inf")
+        susceptible = False
+    else:
+        crr_75 = (
+            (1.0 / (34.0 - n1_60cs))
+            + (n1_60cs / 135.0)
+            + (50.0 / ((10.0 * n1_60cs + 45.0) ** 2))
+            - (1.0 / 200.0)
+        )
+        susceptible = True
+
+    # 6. Magnitude Scaling Factor (MSF) (Youd et al. 2001 lower bound Eq. 11)
+    msf = (7.5 / earthquake_magnitude_mw) ** 2.56
+
+    # 7. Overburden stress correction factor K_sigma
+    if k_sigma_override > 0.0:
+        k_sigma = k_sigma_override
+    else:
+        sigma_eff_pa = effective_stress_psf / pa_psf
+        f_exp = 0.7 if n1_60cs <= 15.0 else 0.8
+        k_sigma = min(max(sigma_eff_pa ** (f_exp - 1.0), 0.1), 1.1)
+
+    # 8. Field Cyclic Resistance Ratio
+    if math.isinf(crr_75):
+        crr = float("inf")
+        fs_liq = float("inf")
+        dcr = 0.0
+    else:
+        crr = crr_75 * msf * k_sigma
+        fs_liq = crr / csr if csr > 0 else float("inf")
+        dcr = min_fs / fs_liq if fs_liq > 0 else float("inf")
+
+    passed = fs_liq >= min_fs
+    return {
+        "pass": passed,
+        "dcr": round(dcr, 4),
+        "factor_of_safety": round(fs_liq, 3) if not math.isinf(fs_liq) else float("inf"),
+        "csr": round(csr, 4),
+        "crr": round(crr, 4) if not math.isinf(crr) else float("inf"),
+        "crr_75": round(crr_75, 4) if not math.isinf(crr_75) else float("inf"),
+        "n1_60cs": round(n1_60cs, 2),
+        "n1_60": round(n1_60, 2),
+        "cn_factor": round(cn, 4),
+        "rd_factor": round(rd, 4),
+        "msf": round(msf, 4),
+        "k_sigma": round(k_sigma, 4),
+        "liquefaction_susceptible": susceptible,
+    }

@@ -3,6 +3,7 @@
 import unittest
 
 from harness.verifiers import (
+    verify_nceer_soil_liquefaction,
     verify_aisc_prying_action,
     verify_driven_pile_axial_capacity,
     verify_aashto_elastomeric_bearing,
@@ -10321,6 +10322,107 @@ class TestEngineeringVerifiers(unittest.TestCase):
         )
         self.assertFalse(res_neg["pass"])
         self.assertEqual(res_neg["reason"], "negative_load_input")
+
+
+    def test_nceer_soil_liquefaction(self) -> None:
+        from harness.verifiers import verify_nceer_soil_liquefaction
+
+        # Passing case in medium dense sand layer (Mw=7.5, PGA=0.15g, N60=20)
+        res_pass = verify_nceer_soil_liquefaction(
+            earthquake_magnitude_mw=7.5,
+            pga_g=0.15,
+            depth_z_ft=20.0,
+            total_stress_psf=2400.0,
+            effective_stress_psf=1500.0,
+            spt_n60=20.0,
+            fines_content_pct=10.0,
+            min_fs=1.20,
+        )
+        self.assertTrue(res_pass["pass"])
+        self.assertAlmostEqual(res_pass["rd_factor"], 0.9534, places=3)
+        self.assertAlmostEqual(res_pass["csr"], 0.1487, places=3)
+        self.assertAlmostEqual(res_pass["n1_60cs"], 25.14, places=1)
+        self.assertGreater(res_pass["factor_of_safety"], 1.20)
+        self.assertLess(res_pass["dcr"], 1.0)
+        self.assertTrue(res_pass["liquefaction_susceptible"])
+
+        # Liquefaction failure in loose sand under moderate shaking (Mw=7.5, PGA=0.25g, N60=15)
+        res_fail = verify_nceer_soil_liquefaction(
+            earthquake_magnitude_mw=7.5,
+            pga_g=0.25,
+            depth_z_ft=20.0,
+            total_stress_psf=2400.0,
+            effective_stress_psf=1500.0,
+            spt_n60=15.0,
+            fines_content_pct=10.0,
+            min_fs=1.20,
+        )
+        self.assertFalse(res_fail["pass"])
+        self.assertLess(res_fail["factor_of_safety"], 1.20)
+        self.assertGreater(res_fail["dcr"], 1.0)
+
+        # Dense sand not susceptible to liquefaction ((N1)60cs >= 30)
+        res_dense = verify_nceer_soil_liquefaction(
+            earthquake_magnitude_mw=7.5,
+            pga_g=0.35,
+            depth_z_ft=20.0,
+            total_stress_psf=2400.0,
+            effective_stress_psf=1500.0,
+            spt_n60=26.0,
+            fines_content_pct=10.0,
+        )
+        self.assertTrue(res_dense["pass"])
+        self.assertFalse(res_dense["liquefaction_susceptible"])
+        self.assertEqual(res_dense["dcr"], 0.0)
+
+        # Stress inversion error (effective stress > total stress)
+        res_stress_err = verify_nceer_soil_liquefaction(
+            earthquake_magnitude_mw=7.5,
+            pga_g=0.20,
+            depth_z_ft=15.0,
+            total_stress_psf=1200.0,
+            effective_stress_psf=1500.0,
+            spt_n60=15.0,
+        )
+        self.assertFalse(res_stress_err["pass"])
+        self.assertEqual(res_stress_err["reason"], "effective_stress_exceeds_total_stress")
+
+        # Invalid fines content error
+        res_fc_err = verify_nceer_soil_liquefaction(
+            earthquake_magnitude_mw=7.5,
+            pga_g=0.20,
+            depth_z_ft=15.0,
+            total_stress_psf=2000.0,
+            effective_stress_psf=1200.0,
+            spt_n60=15.0,
+            fines_content_pct=110.0,
+        )
+        self.assertFalse(res_fc_err["pass"])
+        self.assertEqual(res_fc_err["reason"], "invalid_fines_content")
+
+        # NaN input error handling
+        res_nan = verify_nceer_soil_liquefaction(
+            earthquake_magnitude_mw=float("nan"),
+            pga_g=0.20,
+            depth_z_ft=15.0,
+            total_stress_psf=2000.0,
+            effective_stress_psf=1200.0,
+            spt_n60=15.0,
+        )
+        self.assertFalse(res_nan["pass"])
+        self.assertEqual(res_nan["reason"], "nan_input")
+
+        # Non-positive input error handling
+        res_neg = verify_nceer_soil_liquefaction(
+            earthquake_magnitude_mw=7.5,
+            pga_g=-0.20,
+            depth_z_ft=15.0,
+            total_stress_psf=2000.0,
+            effective_stress_psf=1200.0,
+            spt_n60=15.0,
+        )
+        self.assertFalse(res_neg["pass"])
+        self.assertEqual(res_neg["reason"], "non_positive_pga")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+{
+  "score": 113.0,
+  "tag": "evolve_verifiers",
+  "payload": {
+    "function_name": "verify_nceer_soil_liquefaction",
+    "rationale": "Implements the NCEER / Youd et al. (2001) simplified procedure for earthquake-induced soil liquefaction triggering, computing cyclic stress ratio (CSR), fines-corrected clean-sand equivalent blow count (N1)60cs, cyclic resistance ratio (CRR), and factor of safety.",
+    "model": "gemini-3.8-flash"
+  }
+}
